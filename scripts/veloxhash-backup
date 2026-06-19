@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVICE_NAME="veloxhash.service"
+BACKUP_DIR="${VELOXHASH_BACKUP_DIR:-/var/backups/veloxhash}"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-backup [--output DIR] [--quiet]
+
+Creates a timestamped VeloxHash backup archive. The archive includes:
+  - /etc/veloxhash
+  - /etc/systemd/system/veloxhash.service
+  - /etc/logrotate.d/veloxhash
+  - /usr/local/bin/veloxhash*
+  - /usr/local/lib/veloxhash
+  - a manifest with version and service state
+
+Options:
+  --output DIR  Backup directory, default: /var/backups/veloxhash
+  --quiet       Print only the archive path
+  -h, --help    Show this help
+EOF
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "Please run as root." >&2
+    exit 1
+  fi
+}
+
+timestamp() {
+  date -u '+%Y%m%dT%H%M%SZ'
+}
+
+add_path() {
+  local path="$1"
+  local list_file="$2"
+
+  if [[ -e "${path}" || -L "${path}" ]]; then
+    printf '%s\n' "${path#/}" >> "${list_file}"
+  fi
+}
+
+write_manifest() {
+  local manifest="$1"
+
+  {
+    printf 'created_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'host=%s\n' "$(hostname 2>/dev/null || printf unknown)"
+    printf 'service=%s\n' "${SERVICE_NAME}"
+
+    if command -v systemctl >/dev/null 2>&1; then
+      printf 'active_state=%s\n' "$(systemctl show "${SERVICE_NAME}" -p ActiveState --value 2>/dev/null || true)"
+      printf 'sub_state=%s\n' "$(systemctl show "${SERVICE_NAME}" -p SubState --value 2>/dev/null || true)"
+      printf 'main_pid=%s\n' "$(systemctl show "${SERVICE_NAME}" -p MainPID --value 2>/dev/null || true)"
+      printf 'restart_count=%s\n' "$(systemctl show "${SERVICE_NAME}" -p NRestarts --value 2>/dev/null || true)"
+    fi
+
+    if [[ -x /usr/local/bin/veloxhash ]]; then
+      printf 'binary_version<<EOF\n'
+      /usr/local/bin/veloxhash --version 2>/dev/null | sed -n '1,5p' || true
+      printf 'EOF\n'
+    fi
+  } > "${manifest}"
+}
+
+main() {
+  local quiet=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output)
+        BACKUP_DIR="${2:-}"
+        if [[ -z "${BACKUP_DIR}" ]]; then
+          echo "Missing value for --output" >&2
+          exit 2
+        fi
+        shift
+        ;;
+      --quiet)
+        quiet=1
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+
+  require_root
+
+  install -d -m 0700 "${BACKUP_DIR}"
+
+  local name temp_dir list_file manifest archive
+  name="veloxhash-backup-$(timestamp)"
+  temp_dir="$(mktemp -d)"
+  list_file="${temp_dir}/paths.txt"
+  manifest="${temp_dir}/manifest.txt"
+  archive="${BACKUP_DIR}/${name}.tar.gz"
+
+  trap 'rm -rf "${temp_dir}"' EXIT
+
+  : > "${list_file}"
+  add_path /etc/veloxhash "${list_file}"
+  add_path /etc/systemd/system/veloxhash.service "${list_file}"
+  add_path /etc/systemd/system/veloxhash-policy.service "${list_file}"
+  add_path /etc/systemd/system/veloxhash-policy.timer "${list_file}"
+  add_path /etc/logrotate.d/veloxhash "${list_file}"
+  add_path /usr/local/bin/veloxhash "${list_file}"
+  add_path /usr/local/bin/veloxhash-mining "${list_file}"
+  add_path /usr/local/bin/veloxhash-policy "${list_file}"
+  add_path /usr/local/bin/veloxhash-doctor "${list_file}"
+  add_path /usr/local/bin/veloxhash-status "${list_file}"
+  add_path /usr/local/bin/veloxhash-validate "${list_file}"
+  add_path /usr/local/bin/veloxhash-backup "${list_file}"
+  add_path /usr/local/bin/veloxhash-restore "${list_file}"
+  add_path /usr/local/bin/veloxhash-upgrade "${list_file}"
+  add_path /usr/local/bin/veloxhash-uninstall "${list_file}"
+  add_path /usr/local/lib/veloxhash "${list_file}"
+
+  write_manifest "${manifest}"
+
+  if [[ ! -s "${list_file}" ]]; then
+    echo "No VeloxHash installation files found to back up." >&2
+    exit 1
+  fi
+
+  tar -C / --xattrs --acls -czf "${archive}" --files-from "${list_file}" \
+    -C "${temp_dir}" --transform "s#^manifest.txt#${name}/manifest.txt#" manifest.txt
+  chmod 0600 "${archive}"
+
+  if [[ "${quiet}" -eq 1 ]]; then
+    printf '%s\n' "${archive}"
+  else
+    printf 'VeloxHash backup created: %s\n' "${archive}"
+    printf 'Restore with: sudo veloxhash-restore %s\n' "${archive}"
+  fi
+}
+
+main "$@"

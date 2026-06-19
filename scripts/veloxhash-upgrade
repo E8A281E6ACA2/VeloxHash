@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVICE_NAME="veloxhash.service"
+SKIP_BUILD=0
+SOURCE_DIR=""
+
+usage() {
+  cat <<'EOF'
+Usage: sudo veloxhash-upgrade [--source DIR] [--skip-build]
+
+Safely upgrades the installed VeloxHash service from the current source tree:
+  - creates a backup first
+  - builds build-veloxhash unless --skip-build is used
+  - installs the current binary and operational scripts
+  - restarts the service
+  - runs validate and doctor
+
+Options:
+  --source DIR  VeloxHash source tree, default: current directory or install-info source_root
+  --skip-build  Install the existing build-veloxhash/veloxhash binary
+  -h, --help    Show this help
+EOF
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "Please run as root." >&2
+    exit 1
+  fi
+}
+
+find_source_dir() {
+  local candidate=""
+
+  if [[ -n "${SOURCE_DIR}" ]]; then
+    candidate="${SOURCE_DIR}"
+  elif [[ -f ./scripts/install-systemd-service.sh ]]; then
+    candidate="$(pwd)"
+  elif [[ -n "${VELOXHASH_SOURCE_DIR:-}" ]]; then
+    candidate="${VELOXHASH_SOURCE_DIR}"
+  elif [[ -r /etc/veloxhash/install-info.json ]] && command -v python3 >/dev/null 2>&1; then
+    candidate="$(python3 - <<'PY' 2>/dev/null || true
+import json
+from pathlib import Path
+print(json.loads(Path("/etc/veloxhash/install-info.json").read_text()).get("source_root", ""))
+PY
+)"
+  fi
+
+  if [[ -z "${candidate}" || ! -f "${candidate}/scripts/install-systemd-service.sh" ]]; then
+    echo "Cannot find VeloxHash source tree. Run from the repo or pass --source DIR." >&2
+    exit 1
+  fi
+
+  cd "${candidate}"
+  pwd
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source)
+        SOURCE_DIR="${2:-}"
+        if [[ -z "${SOURCE_DIR}" ]]; then
+          echo "Missing value for --source" >&2
+          exit 2
+        fi
+        shift
+        ;;
+      --skip-build)
+        SKIP_BUILD=1
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+
+  require_root
+
+  local root_dir install_script
+  root_dir="$(find_source_dir)"
+  install_script="${root_dir}/scripts/install-systemd-service.sh"
+
+  local backup=""
+  if command -v veloxhash-backup >/dev/null 2>&1; then
+    echo "Creating pre-upgrade backup..."
+    backup="$(veloxhash-backup --quiet)"
+    echo "Backup: ${backup}"
+  else
+    echo "Warning: veloxhash-backup not installed; continuing without backup." >&2
+  fi
+
+  if [[ "${SKIP_BUILD}" -eq 0 ]]; then
+    cmake --build "${root_dir}/build-veloxhash" -j"$(nproc)"
+  fi
+
+  "${install_script}"
+
+  if command -v veloxhash-validate >/dev/null 2>&1; then
+    veloxhash-validate
+  fi
+
+  if command -v veloxhash-doctor >/dev/null 2>&1; then
+    veloxhash-doctor
+  fi
+
+  if systemctl is-active --quiet "${SERVICE_NAME}"; then
+    echo "VeloxHash upgrade complete."
+  else
+    echo "VeloxHash service is not active after upgrade." >&2
+    if [[ -n "${backup}" ]]; then
+      echo "Restore with: veloxhash-restore ${backup}" >&2
+    fi
+    exit 1
+  fi
+}
+
+main "$@"

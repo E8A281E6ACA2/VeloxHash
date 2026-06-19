@@ -1,0 +1,816 @@
+#!/usr/bin/env bash
+
+set -u
+
+SERVICE_NAME="veloxhash.service"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ETC_DIR="/etc/veloxhash"
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+INSTALL_INFO="/etc/veloxhash/install-info.json"
+BACKUP_DIR="${VELOXHASH_BACKUP_DIR:-/var/backups/veloxhash}"
+PORT="${VELOXHASH_STATUS_PORT:-8089}"
+HOST="${VELOXHASH_STATUS_HOST:-127.0.0.1}"
+BASE_URL="http://${HOST}:${PORT}"
+LOG_LINES="${VELOXHASH_STATUS_LOG_LINES:-80}"
+
+OUTPUT_FORMAT="text"
+WARN_COUNT=0
+CRITICAL_COUNT=0
+EVENTS=""
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-status [--short] [--json]
+
+Shows a compact VeloxHash service snapshot:
+  - systemd state and restart count
+  - install version and source when readable
+  - process CPU and memory
+  - mining switch and backend state when token access is available
+  - dashboard/API reachability
+  - optional cluster role and node count
+  - latest backup and recent suspicious journal lines
+
+Options:
+  --short     Print one line
+  --json      Print machine-readable JSON
+  -h, --help  Show this help
+
+Environment:
+  VELOXHASH_STATUS_HOST       API host to check, default: 127.0.0.1
+  VELOXHASH_STATUS_PORT       API port to check, default: 8089
+  VELOXHASH_STATUS_LOG_LINES  Journal lines to scan, default: 80
+  VELOXHASH_BACKUP_DIR        Backup directory, default: /var/backups/veloxhash
+EOF
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+add_event() {
+  local level="$1"
+  local key="$2"
+  local message="$3"
+
+  case "${level}" in
+    WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+    CRITICAL) CRITICAL_COUNT=$((CRITICAL_COUNT + 1)) ;;
+  esac
+  EVENTS="${EVENTS}${level}|${key}|${message}"$'\n'
+}
+
+overall_status() {
+  if (( CRITICAL_COUNT > 0 )); then
+    printf 'CRITICAL'
+  elif (( WARN_COUNT > 0 )); then
+    printf 'WARN'
+  else
+    printf 'OK'
+  fi
+}
+
+line() {
+  printf '  %-16s %s\n' "$1:" "$2"
+}
+
+section() {
+  printf '\n%s\n' "$1"
+}
+
+systemctl_value() {
+  local key="$1"
+  if have systemctl; then
+    systemctl show "${SERVICE_NAME}" -p "${key}" --value 2>/dev/null
+  fi
+}
+
+get_env_value() {
+  local key="$1"
+  if [[ -x "${ETC_DIR}" && -r "${ENV_FILE}" ]]; then
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+  fi
+}
+
+http_status() {
+  local url="$1"
+  if have curl; then
+    curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "${url}" 2>/dev/null
+  fi
+}
+
+http_get() {
+  local url="$1"
+  shift
+  if have curl; then
+    curl -fsS --connect-timeout 2 --max-time 5 "$@" "${url}" 2>/dev/null
+  fi
+}
+
+gather_service() {
+  SERVICE_ACTIVE="$(systemctl_value ActiveState)"
+  SERVICE_SUB="$(systemctl_value SubState)"
+  SERVICE_ENABLED="$(systemctl is-enabled "${SERVICE_NAME}" 2>/dev/null || true)"
+  SERVICE_PID="$(systemctl_value MainPID)"
+  SERVICE_RESTARTS="$(systemctl_value NRestarts)"
+  SERVICE_STARTED="$(systemctl_value ExecMainStartTimestamp)"
+  SERVICE_RESTART_POLICY="$(systemctl_value Restart)"
+  SERVICE_RESTART_SEC="$(systemctl_value RestartUSec)"
+  SERVICE_LIMIT_INTERVAL="$(systemctl_value StartLimitIntervalUSec)"
+  SERVICE_LIMIT_BURST="$(systemctl_value StartLimitBurst)"
+  POLICY_TIMER_ACTIVE="$(systemctl show veloxhash-policy.timer -p ActiveState --value 2>/dev/null)"
+  POLICY_TIMER_ENABLED="$(systemctl is-enabled veloxhash-policy.timer 2>/dev/null || true)"
+  POLICY_TIMER_NEXT="$(systemctl show veloxhash-policy.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
+
+  if [[ "${SERVICE_ACTIVE}" != "active" || "${SERVICE_SUB}" != "running" ]]; then
+    add_event CRITICAL service "service is ${SERVICE_ACTIVE:-unknown}/${SERVICE_SUB:-unknown}"
+  fi
+
+  if [[ "${SERVICE_RESTARTS:-0}" =~ ^[0-9]+$ && "${SERVICE_RESTARTS}" -gt 5 ]]; then
+    add_event WARN service "restart count is high: ${SERVICE_RESTARTS}"
+  fi
+
+  if [[ "${POLICY_TIMER_ACTIVE}" != "active" ]]; then
+    add_event WARN policy "policy timer is ${POLICY_TIMER_ACTIVE:-unknown}"
+  fi
+}
+
+gather_process() {
+  PROCESS_CPU="unknown"
+  PROCESS_MEM="unknown"
+  PROCESS_RSS_MB="unknown"
+  PROCESS_ELAPSED="unknown"
+  PROCESS_COMMAND="unknown"
+
+  if [[ -z "${SERVICE_PID:-}" || "${SERVICE_PID}" == "0" ]]; then
+    add_event CRITICAL process "main process is not running"
+    return
+  fi
+
+  if ! have ps; then
+    add_event WARN process "ps not available"
+    return
+  fi
+
+  local values rss
+  values="$(ps -p "${SERVICE_PID}" -o pcpu= -o pmem= -o rss= -o etime= -o comm= 2>/dev/null | awk '{$1=$1; print}')"
+  if [[ -z "${values}" ]]; then
+    add_event CRITICAL process "pid ${SERVICE_PID} is not visible"
+    return
+  fi
+
+  PROCESS_CPU="$(printf '%s\n' "${values}" | awk '{print $1}')"
+  PROCESS_MEM="$(printf '%s\n' "${values}" | awk '{print $2}')"
+  rss="$(printf '%s\n' "${values}" | awk '{print $3}')"
+  PROCESS_ELAPSED="$(printf '%s\n' "${values}" | awk '{print $4}')"
+  PROCESS_COMMAND="$(printf '%s\n' "${values}" | awk '{print $5}')"
+  if [[ "${rss}" =~ ^[0-9]+$ ]]; then
+    PROCESS_RSS_MB="$(awk -v kb="${rss}" 'BEGIN { printf "%.1f", kb / 1024 }')"
+  fi
+}
+
+gather_install() {
+  INSTALL_RECORD="unknown"
+  INSTALL_TIME="unknown"
+  INSTALL_SOURCE="unknown"
+  INSTALL_VERSION="unknown"
+  INSTALL_GIT="unknown"
+  INSTALL_HTTP="unknown"
+
+  if [[ ! -r "${INSTALL_INFO}" ]]; then
+    if [[ ! -x "${ETC_DIR}" ]]; then
+      INSTALL_RECORD="unknown (run as root to access ${ETC_DIR})"
+      add_event WARN install "install record cannot be checked by this user"
+    elif [[ -e "${INSTALL_INFO}" ]]; then
+      INSTALL_RECORD="exists but not readable"
+      add_event WARN install "install record exists but is not readable"
+    else
+      INSTALL_RECORD="not found"
+      add_event WARN install "install record not found"
+    fi
+    return
+  fi
+
+  INSTALL_RECORD="${INSTALL_INFO}"
+  if ! have python3; then
+    add_event WARN install "python3 not available to parse install record"
+    return
+  fi
+
+  local parsed
+  parsed="$(python3 - "${INSTALL_INFO}" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+version = data.get("binary_version") or []
+git = data.get("git") or {}
+branch = git.get("branch") or "unknown"
+commit = (git.get("commit") or "")[:12]
+dirty = git.get("dirty") or ""
+git_line = f"{branch}@{commit}" if commit else branch
+if dirty == "true":
+    git_line = f"{git_line} dirty"
+print("time=" + str(data.get("installed_at_utc", "unknown")))
+print("source=" + str(data.get("source_root", "unknown")))
+print("version=" + str(version[0] if version else "unknown"))
+print("git=" + git_line)
+print("http=" + f"{data.get('http_host', 'unknown')}:{data.get('http_port', 'unknown')}")
+PY
+)"
+
+  if [[ -z "${parsed}" ]]; then
+    add_event WARN install "install record parse failed"
+    return
+  fi
+
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      time) INSTALL_TIME="${value}" ;;
+      source) INSTALL_SOURCE="${value}" ;;
+      version) INSTALL_VERSION="${value}" ;;
+      git) INSTALL_GIT="${value}" ;;
+      http) INSTALL_HTTP="${value}" ;;
+    esac
+  done <<< "${parsed}"
+}
+
+gather_mining() {
+  MINING_SWITCH="unknown"
+  POLICY_SWITCH="unknown"
+  POLICY_CPU_PERCENT="unknown"
+  POLICY_WORK_WINDOW="unknown"
+  POLICY_LOAD_THRESHOLD="unknown"
+  POLICY_ACTIVE_MINUTES="unknown"
+  POLICY_DESIRED="unknown"
+  POLICY_REASON="unknown"
+  POLICY_HOUR="unknown"
+  POLICY_CORES="unknown"
+  POLICY_LOAD="unknown"
+  POLICY_BUSY="unknown"
+  POLICY_WORK_ACTIVE="unknown"
+  POLICY_USER_ACTIVE="unknown"
+  BACKEND_SUMMARY="unknown"
+  HASHRATE_NOW="n/a"
+  HASHRATE_AVG="n/a"
+  SHARES="n/a"
+  POOL="n/a"
+
+  local mining token wallet policy_enabled policy_cpu work_start work_end load_threshold active_minutes
+  mining="$(get_env_value VELOXHASH_MINING_ENABLED)"
+  token="$(get_env_value VELOXHASH_API_TOKEN)"
+  wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+  policy_enabled="$(get_env_value VELOXHASH_POLICY_ENABLED)"
+  policy_cpu="$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)"
+  work_start="$(get_env_value VELOXHASH_POLICY_WORK_START)"
+  work_end="$(get_env_value VELOXHASH_POLICY_WORK_END)"
+  load_threshold="$(get_env_value VELOXHASH_POLICY_LOAD_THRESHOLD)"
+  active_minutes="$(get_env_value VELOXHASH_POLICY_ACTIVE_MINUTES)"
+
+  case "${policy_enabled:-}" in
+    1|true|TRUE|yes|YES|on|ON) POLICY_SWITCH="enabled" ;;
+    0|false|FALSE|no|NO|off|OFF) POLICY_SWITCH="disabled" ;;
+    "") POLICY_SWITCH="unknown (run as root to read ${ENV_FILE})" ;;
+    *) POLICY_SWITCH="unusual value: ${policy_enabled}" ;;
+  esac
+  POLICY_CPU_PERCENT="${policy_cpu:-50}"
+  POLICY_WORK_WINDOW="${work_start:-08}-${work_end:-22}"
+  POLICY_LOAD_THRESHOLD="${load_threshold:-0.60}"
+  POLICY_ACTIVE_MINUTES="${active_minutes:-15}"
+
+  local policy_command
+  if [[ -x "${SCRIPT_DIR}/veloxhash-policy" ]]; then
+    policy_command="${SCRIPT_DIR}/veloxhash-policy"
+  elif [[ -x /usr/local/bin/veloxhash-policy ]]; then
+    policy_command="/usr/local/bin/veloxhash-policy"
+  else
+    policy_command=""
+  fi
+
+  if [[ -n "${policy_command}" ]]; then
+    local policy_status
+    policy_status="$("${policy_command}" status 2>/dev/null || true)"
+    POLICY_DESIRED="$(printf '%s\n' "${policy_status}" | sed -n 's/^desired=//p' | tail -n 1)"
+    POLICY_REASON="$(printf '%s\n' "${policy_status}" | sed -n 's/^reason=//p' | tail -n 1)"
+    POLICY_HOUR="$(printf '%s\n' "${policy_status}" | sed -n 's/^hour=//p' | tail -n 1)"
+    POLICY_CORES="$(printf '%s\n' "${policy_status}" | sed -n 's/^cores=//p' | tail -n 1)"
+    POLICY_LOAD="$(printf '%s\n' "${policy_status}" | sed -n 's/^load1=//p' | tail -n 1)"
+    POLICY_BUSY="$(printf '%s\n' "${policy_status}" | sed -n 's/^busy=//p' | tail -n 1)"
+    POLICY_WORK_ACTIVE="$(printf '%s\n' "${policy_status}" | sed -n 's/^work_window=//p' | tail -n 1)"
+    POLICY_USER_ACTIVE="$(printf '%s\n' "${policy_status}" | sed -n 's/^user_active=//p' | tail -n 1)"
+    POLICY_DESIRED="${POLICY_DESIRED:-unknown}"
+    POLICY_REASON="${POLICY_REASON:-unknown}"
+    POLICY_HOUR="${POLICY_HOUR:-unknown}"
+    POLICY_CORES="${POLICY_CORES:-unknown}"
+    POLICY_LOAD="${POLICY_LOAD:-unknown}"
+    POLICY_BUSY="${POLICY_BUSY:-unknown}"
+    POLICY_WORK_ACTIVE="${POLICY_WORK_ACTIVE:-unknown}"
+    POLICY_USER_ACTIVE="${POLICY_USER_ACTIVE:-unknown}"
+  fi
+
+  case "${mining:-}" in
+    1|true|TRUE|yes|YES|on|ON) MINING_SWITCH="enabled" ;;
+    0|false|FALSE|no|NO|off|OFF) MINING_SWITCH="disabled" ;;
+    "")
+      MINING_SWITCH="unknown (run as root to read ${ENV_FILE})"
+      add_event WARN mining "mining switch cannot be checked by this user"
+      ;;
+    *)
+      MINING_SWITCH="unusual value: ${mining}"
+      add_event WARN mining "unusual mining switch value: ${mining}"
+      ;;
+  esac
+
+  if [[ -z "${wallet}" || "${wallet}" == "YOUR_WALLET_ADDRESS" || "${wallet}" == "\${VELOXHASH_WALLET_ADDRESS}" ]]; then
+    add_event WARN wallet "public wallet address is not configured; mining will remain disabled"
+  elif [[ "${wallet}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    add_event CRITICAL wallet "wallet value looks like a private key; use public address only"
+  fi
+
+  if [[ -z "${token}" ]]; then
+    BACKEND_SUMMARY="unknown (API token unavailable)"
+    add_event WARN api "authenticated API details unavailable to this user"
+    return
+  fi
+
+  if ! have python3; then
+    BACKEND_SUMMARY="raw API reachable (python3 unavailable)"
+    add_event WARN api "python3 not available to parse API responses"
+    return
+  fi
+
+  local backends summary parsed
+  backends="$(http_get "${BASE_URL}/2/backends" -H "Authorization: Bearer ${token}")"
+  if [[ -z "${backends}" ]]; then
+    BACKEND_SUMMARY="API request failed"
+    add_event CRITICAL api "authenticated backends API failed"
+  else
+    parsed="$(printf '%s' "${backends}" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+enabled = [item for item in data if item.get("enabled")]
+parts = []
+for item in data:
+    backend_type = item.get("type", "unknown")
+    state = "enabled" if item.get("enabled") else "disabled"
+    threads = len(item.get("threads") or [])
+    algo = item.get("algo") or "none"
+    parts.append(f"{backend_type}:{state},algo={algo},threads={threads}")
+print(f"{len(data)} total, {len(enabled)} enabled; " + "; ".join(parts))
+' 2>/dev/null || true)"
+    BACKEND_SUMMARY="${parsed:-parse failed}"
+  fi
+
+  summary="$(http_get "${BASE_URL}/1/summary" -H "Authorization: Bearer ${token}")"
+  if [[ -z "${summary}" ]]; then
+    add_event CRITICAL api "authenticated summary API failed"
+    return
+  fi
+
+  parsed="$(printf '%s' "${summary}" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+total = (data.get("hashrate") or {}).get("total") or []
+def rate(index):
+    try:
+        return f"{float(total[index]):.2f} H/s"
+    except Exception:
+        return "n/a"
+results = data.get("results") or {}
+connection = data.get("connection") or {}
+print("hashrate_now=" + rate(0))
+print("hashrate_avg=" + rate(1))
+print("shares=" + f"{results.get('shares_good', 0)}/{results.get('shares_total', 0)} accepted")
+print("pool=" + str(connection.get("pool", "n/a")))
+' 2>/dev/null || true)"
+
+  while IFS='=' read -r key value; do
+    case "${key}" in
+      hashrate_now) HASHRATE_NOW="${value}" ;;
+      hashrate_avg) HASHRATE_AVG="${value}" ;;
+      shares) SHARES="${value}" ;;
+      pool) POOL="${value}" ;;
+    esac
+  done <<< "${parsed}"
+}
+
+gather_http() {
+  PORT_STATUS="unknown"
+  DASHBOARD_STATUS="unknown"
+  API_AUTH_STATUS="unknown"
+
+  if have ss; then
+    if ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+      PORT_STATUS="${PORT} listening"
+    else
+      PORT_STATUS="${PORT} not listening"
+      add_event CRITICAL port "${PORT} is not listening"
+    fi
+  else
+    PORT_STATUS="unknown (ss unavailable)"
+    add_event WARN port "ss not available"
+  fi
+
+  local status
+  status="$(http_status "${BASE_URL}/")"
+  if [[ "${status}" == "200" ]]; then
+    DASHBOARD_STATUS="reachable"
+  else
+    DASHBOARD_STATUS="not reachable (${status:-no response})"
+    add_event CRITICAL http "dashboard is ${DASHBOARD_STATUS}"
+  fi
+
+  status="$(http_status "${BASE_URL}/1/summary")"
+  case "${status}" in
+    401|403) API_AUTH_STATUS="protected (${status})" ;;
+    200)
+      API_AUTH_STATUS="open (200)"
+      add_event WARN api "unauthenticated summary API returned 200"
+      ;;
+    "")
+      API_AUTH_STATUS="no response"
+      add_event CRITICAL api "summary API has no response"
+      ;;
+    *)
+      API_AUTH_STATUS="HTTP ${status}"
+      add_event WARN api "summary API returned HTTP ${status}"
+      ;;
+  esac
+}
+
+gather_cluster() {
+  CLUSTER_ENABLED="unknown"
+  CLUSTER_ROLE="unknown"
+  CLUSTER_URL="unknown"
+  CLUSTER_TOKEN_STATE="unknown"
+  CLUSTER_PRIMARY_ACTIVE="unknown"
+  CLUSTER_TIMER_ACTIVE="unknown"
+  CLUSTER_NODES="n/a"
+
+  local enabled role token port primary_url
+  enabled="$(get_env_value VELOXHASH_CLUSTER_ENABLED)"
+  role="$(get_env_value VELOXHASH_CLUSTER_ROLE)"
+  token="$(get_env_value VELOXHASH_CLUSTER_TOKEN)"
+  port="$(get_env_value VELOXHASH_CLUSTER_PORT)"
+  primary_url="$(get_env_value VELOXHASH_CLUSTER_PRIMARY_URL)"
+
+  case "${enabled:-0}" in
+    1|true|TRUE|yes|YES|on|ON) CLUSTER_ENABLED="enabled" ;;
+    0|false|FALSE|no|NO|off|OFF|"") CLUSTER_ENABLED="disabled" ;;
+    *) CLUSTER_ENABLED="unusual value: ${enabled}" ;;
+  esac
+  CLUSTER_ROLE="${role:-standalone}"
+  CLUSTER_URL="${primary_url:-}"
+  if [[ -z "${CLUSTER_URL}" && "${CLUSTER_ROLE}" == "primary" ]]; then
+    CLUSTER_URL="http://127.0.0.1:${port:-8090}"
+  fi
+  CLUSTER_URL="${CLUSTER_URL:-not configured}"
+  CLUSTER_TOKEN_STATE="$([[ "${#token}" -ge 24 ]] && printf configured || printf missing)"
+
+  if have systemctl; then
+    CLUSTER_PRIMARY_ACTIVE="$(systemctl show veloxhash-cluster-primary.service -p ActiveState --value 2>/dev/null)"
+    CLUSTER_TIMER_ACTIVE="$(systemctl show veloxhash-cluster-heartbeat.timer -p ActiveState --value 2>/dev/null)"
+    CLUSTER_PRIMARY_ACTIVE="${CLUSTER_PRIMARY_ACTIVE:-unknown}"
+    CLUSTER_TIMER_ACTIVE="${CLUSTER_TIMER_ACTIVE:-unknown}"
+  fi
+
+  if [[ "${CLUSTER_ENABLED}" == "enabled" && "${#token}" -ge 24 && "${CLUSTER_URL}" != "not configured" ]] && have curl && have python3; then
+    local nodes_json
+    nodes_json="$(curl -fsS --connect-timeout 2 --max-time 5 -H "Authorization: Bearer ${token}" "${CLUSTER_URL}/api/v1/count" 2>/dev/null || true)"
+    if [[ -n "${nodes_json}" ]]; then
+      CLUSTER_NODES="$(printf '%s' "${nodes_json}" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+print("{} online / {} total".format(data.get("online_count", "?"), data.get("total_count", "?")))
+' 2>/dev/null || printf 'parse failed')"
+    else
+      CLUSTER_NODES="unreachable"
+      add_event WARN cluster "cluster primary count API unreachable"
+    fi
+  fi
+}
+
+gather_logs() {
+  RECENT_SIGNALS=""
+  if ! have journalctl; then
+    RECENT_SIGNALS="journalctl not available"
+    add_event WARN journal "journalctl not available"
+    return
+  fi
+
+  RECENT_SIGNALS="$(journalctl -u "${SERVICE_NAME}" -n "${LOG_LINES}" --no-pager 2>/dev/null | grep -Ei 'error|failed|cannot|denied|fatal|timeout|killed' | tail -n 5 || true)"
+  if [[ -n "${RECENT_SIGNALS}" ]]; then
+    add_event WARN journal "suspicious journal lines found"
+  fi
+}
+
+gather_backup() {
+  LATEST_BACKUP="unknown"
+  if [[ ! -d "${BACKUP_DIR}" ]]; then
+    LATEST_BACKUP="not found"
+    add_event WARN backup "backup directory not found or not readable"
+    return
+  fi
+
+  if [[ ! -x "${BACKUP_DIR}" || ! -r "${BACKUP_DIR}" ]]; then
+    LATEST_BACKUP="unknown (run as root to access ${BACKUP_DIR})"
+    add_event WARN backup "backup directory cannot be checked by this user"
+    return
+  fi
+
+  LATEST_BACKUP="$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'veloxhash-backup-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {print $2}')"
+  if [[ -z "${LATEST_BACKUP}" ]]; then
+    LATEST_BACKUP="none"
+    add_event WARN backup "no backup archives found"
+  fi
+}
+
+gather_all() {
+  gather_service
+  gather_process
+  gather_install
+  gather_mining
+  gather_http
+  gather_cluster
+  gather_logs
+  gather_backup
+}
+
+print_text() {
+  printf 'VeloxHash status: %s\n' "$(overall_status)"
+  printf 'Target: %s\n' "${BASE_URL}"
+
+  section "Service"
+  line "state" "${SERVICE_ACTIVE:-unknown}/${SERVICE_SUB:-unknown}"
+  line "enabled" "${SERVICE_ENABLED:-unknown}"
+  line "pid" "${SERVICE_PID:-unknown}"
+  line "restarts" "${SERVICE_RESTARTS:-unknown}"
+  line "started" "${SERVICE_STARTED:-unknown}"
+  line "restart policy" "${SERVICE_RESTART_POLICY:-unknown}, ${SERVICE_RESTART_SEC:-unknown}"
+  line "start limit" "${SERVICE_LIMIT_BURST:-unknown} per ${SERVICE_LIMIT_INTERVAL:-unknown}"
+  line "policy timer" "${POLICY_TIMER_ACTIVE:-unknown}/${POLICY_TIMER_ENABLED:-unknown}"
+  line "next policy" "${POLICY_TIMER_NEXT:-unknown}"
+
+  section "Process"
+  line "cpu" "${PROCESS_CPU}%"
+  line "memory" "${PROCESS_RSS_MB} MB RSS (${PROCESS_MEM}%)"
+  line "elapsed" "${PROCESS_ELAPSED}"
+  line "command" "${PROCESS_COMMAND}"
+
+  section "Install"
+  line "record" "${INSTALL_RECORD}"
+  line "installed" "${INSTALL_TIME}"
+  line "source" "${INSTALL_SOURCE}"
+  line "version" "${INSTALL_VERSION}"
+  line "git" "${INSTALL_GIT}"
+  line "http" "${INSTALL_HTTP}"
+
+  section "Mining"
+  line "policy" "${POLICY_SWITCH}"
+  line "policy cpu" "${POLICY_CPU_PERCENT}%"
+  line "work window" "${POLICY_WORK_WINDOW}"
+  line "decision" "mining=${POLICY_DESIRED}, ${POLICY_REASON}"
+  line "now" "hour=${POLICY_HOUR}, cores=${POLICY_CORES}, load1=${POLICY_LOAD}"
+  line "load threshold" "${POLICY_LOAD_THRESHOLD}"
+  line "cpu busy" "${POLICY_BUSY}"
+  line "work active" "${POLICY_WORK_ACTIVE}"
+  line "active window" "${POLICY_ACTIVE_MINUTES} min"
+  line "user active" "${POLICY_USER_ACTIVE}"
+  line "switch" "${MINING_SWITCH}"
+  line "backend" "${BACKEND_SUMMARY}"
+  line "hashrate now" "${HASHRATE_NOW}"
+  line "hashrate avg" "${HASHRATE_AVG}"
+  line "shares" "${SHARES}"
+  line "pool" "${POOL}"
+
+  section "HTTP"
+  line "port" "${PORT_STATUS}"
+  line "dashboard" "${DASHBOARD_STATUS}"
+  line "API auth" "${API_AUTH_STATUS}"
+
+  section "Cluster"
+  line "enabled" "${CLUSTER_ENABLED}"
+  line "role" "${CLUSTER_ROLE}"
+  line "primary URL" "${CLUSTER_URL}"
+  line "token" "${CLUSTER_TOKEN_STATE}"
+  line "primary svc" "${CLUSTER_PRIMARY_ACTIVE}"
+  line "heartbeat" "${CLUSTER_TIMER_ACTIVE}"
+  line "nodes" "${CLUSTER_NODES}"
+
+  section "Backup"
+  line "latest" "${LATEST_BACKUP}"
+
+  section "Recent Signals"
+  if [[ -n "${RECENT_SIGNALS}" ]]; then
+    printf '%s\n' "${RECENT_SIGNALS}" | sed 's/^/  /'
+  else
+    line "journal" "no suspicious lines in last ${LOG_LINES} entries"
+  fi
+
+  if [[ -n "${EVENTS}" ]]; then
+    section "Issues"
+    printf '%s' "${EVENTS}" | while IFS='|' read -r level key message; do
+      [[ -n "${level}" ]] && printf '  %-8s %-12s %s\n' "${level}" "${key}" "${message}"
+    done
+  fi
+
+  printf '\nResult: %s (%s warning(s), %s critical issue(s))\n' "$(overall_status)" "${WARN_COUNT}" "${CRITICAL_COUNT}"
+}
+
+print_short() {
+  printf '%s service=%s/%s pid=%s restarts=%s policy="%s" decision="%s:%s" timer=%s mining="%s" cluster="%s:%s:%s" port="%s" cpu=%s%% memory="%sMB" backup="%s"\n' \
+    "$(overall_status)" \
+    "${SERVICE_ACTIVE:-unknown}" \
+    "${SERVICE_SUB:-unknown}" \
+    "${SERVICE_PID:-unknown}" \
+    "${SERVICE_RESTARTS:-unknown}" \
+    "${POLICY_SWITCH}" \
+    "${POLICY_DESIRED}" \
+    "${POLICY_REASON}" \
+    "${POLICY_TIMER_ACTIVE:-unknown}" \
+    "${MINING_SWITCH}" \
+    "${CLUSTER_ENABLED}" \
+    "${CLUSTER_ROLE}" \
+    "${CLUSTER_NODES}" \
+    "${PORT_STATUS}" \
+    "${PROCESS_CPU}" \
+    "${PROCESS_RSS_MB}" \
+    "${LATEST_BACKUP}"
+}
+
+print_json() {
+  if ! have python3; then
+    echo "python3 is required for --json" >&2
+    exit 2
+  fi
+
+  STATUS="$(overall_status)" \
+  WARN_COUNT="${WARN_COUNT}" \
+  CRITICAL_COUNT="${CRITICAL_COUNT}" \
+  EVENTS="${EVENTS}" \
+  SERVICE_ACTIVE="${SERVICE_ACTIVE:-}" \
+  SERVICE_SUB="${SERVICE_SUB:-}" \
+  SERVICE_ENABLED="${SERVICE_ENABLED:-}" \
+  SERVICE_PID="${SERVICE_PID:-}" \
+  SERVICE_RESTARTS="${SERVICE_RESTARTS:-}" \
+  SERVICE_STARTED="${SERVICE_STARTED:-}" \
+  POLICY_TIMER_ACTIVE="${POLICY_TIMER_ACTIVE:-}" \
+  POLICY_TIMER_ENABLED="${POLICY_TIMER_ENABLED:-}" \
+  POLICY_TIMER_NEXT="${POLICY_TIMER_NEXT:-}" \
+  PROCESS_CPU="${PROCESS_CPU:-}" \
+  PROCESS_MEM="${PROCESS_MEM:-}" \
+  PROCESS_RSS_MB="${PROCESS_RSS_MB:-}" \
+  PROCESS_ELAPSED="${PROCESS_ELAPSED:-}" \
+  PROCESS_COMMAND="${PROCESS_COMMAND:-}" \
+  INSTALL_RECORD="${INSTALL_RECORD:-}" \
+  INSTALL_TIME="${INSTALL_TIME:-}" \
+  INSTALL_SOURCE="${INSTALL_SOURCE:-}" \
+  INSTALL_VERSION="${INSTALL_VERSION:-}" \
+  INSTALL_GIT="${INSTALL_GIT:-}" \
+  INSTALL_HTTP="${INSTALL_HTTP:-}" \
+  MINING_SWITCH="${MINING_SWITCH:-}" \
+  POLICY_SWITCH="${POLICY_SWITCH:-}" \
+  POLICY_CPU_PERCENT="${POLICY_CPU_PERCENT:-}" \
+  POLICY_WORK_WINDOW="${POLICY_WORK_WINDOW:-}" \
+  POLICY_LOAD_THRESHOLD="${POLICY_LOAD_THRESHOLD:-}" \
+  POLICY_ACTIVE_MINUTES="${POLICY_ACTIVE_MINUTES:-}" \
+  POLICY_DESIRED="${POLICY_DESIRED:-}" \
+  POLICY_REASON="${POLICY_REASON:-}" \
+  POLICY_HOUR="${POLICY_HOUR:-}" \
+  POLICY_CORES="${POLICY_CORES:-}" \
+  POLICY_LOAD="${POLICY_LOAD:-}" \
+  POLICY_BUSY="${POLICY_BUSY:-}" \
+  POLICY_WORK_ACTIVE="${POLICY_WORK_ACTIVE:-}" \
+  POLICY_USER_ACTIVE="${POLICY_USER_ACTIVE:-}" \
+  BACKEND_SUMMARY="${BACKEND_SUMMARY:-}" \
+  HASHRATE_NOW="${HASHRATE_NOW:-}" \
+  HASHRATE_AVG="${HASHRATE_AVG:-}" \
+  SHARES="${SHARES:-}" \
+  POOL="${POOL:-}" \
+  PORT_STATUS="${PORT_STATUS:-}" \
+  DASHBOARD_STATUS="${DASHBOARD_STATUS:-}" \
+  API_AUTH_STATUS="${API_AUTH_STATUS:-}" \
+  CLUSTER_ENABLED="${CLUSTER_ENABLED:-}" \
+  CLUSTER_ROLE="${CLUSTER_ROLE:-}" \
+  CLUSTER_URL="${CLUSTER_URL:-}" \
+  CLUSTER_TOKEN_STATE="${CLUSTER_TOKEN_STATE:-}" \
+  CLUSTER_PRIMARY_ACTIVE="${CLUSTER_PRIMARY_ACTIVE:-}" \
+  CLUSTER_TIMER_ACTIVE="${CLUSTER_TIMER_ACTIVE:-}" \
+  CLUSTER_NODES="${CLUSTER_NODES:-}" \
+  LATEST_BACKUP="${LATEST_BACKUP:-}" \
+  BASE_URL="${BASE_URL}" \
+  python3 - <<'PY'
+import json
+import os
+
+events = []
+for line in os.environ.get("EVENTS", "").splitlines():
+    level, key, message = line.split("|", 2)
+    events.append({"level": level, "key": key, "message": message})
+
+payload = {
+    "status": os.environ["STATUS"],
+    "warnings": int(os.environ["WARN_COUNT"]),
+    "critical": int(os.environ["CRITICAL_COUNT"]),
+    "target": os.environ["BASE_URL"],
+    "service": {
+        "active": os.environ["SERVICE_ACTIVE"],
+        "sub": os.environ["SERVICE_SUB"],
+        "enabled": os.environ["SERVICE_ENABLED"],
+        "pid": os.environ["SERVICE_PID"],
+        "restarts": os.environ["SERVICE_RESTARTS"],
+        "started": os.environ["SERVICE_STARTED"],
+    },
+    "policy": {
+        "enabled": os.environ["POLICY_SWITCH"],
+        "cpu_percent": os.environ["POLICY_CPU_PERCENT"],
+        "work_window": os.environ["POLICY_WORK_WINDOW"],
+        "load_threshold": os.environ["POLICY_LOAD_THRESHOLD"],
+        "active_minutes": os.environ["POLICY_ACTIVE_MINUTES"],
+        "desired_mining": os.environ["POLICY_DESIRED"],
+        "reason": os.environ["POLICY_REASON"],
+        "hour": os.environ["POLICY_HOUR"],
+        "cores": os.environ["POLICY_CORES"],
+        "load1": os.environ["POLICY_LOAD"],
+        "busy": os.environ["POLICY_BUSY"],
+        "work_active": os.environ["POLICY_WORK_ACTIVE"],
+        "user_active": os.environ["POLICY_USER_ACTIVE"],
+        "timer_active": os.environ["POLICY_TIMER_ACTIVE"],
+        "timer_enabled": os.environ["POLICY_TIMER_ENABLED"],
+        "timer_next": os.environ["POLICY_TIMER_NEXT"],
+    },
+    "process": {
+        "cpu_percent": os.environ["PROCESS_CPU"],
+        "memory_percent": os.environ["PROCESS_MEM"],
+        "rss_mb": os.environ["PROCESS_RSS_MB"],
+        "elapsed": os.environ["PROCESS_ELAPSED"],
+        "command": os.environ["PROCESS_COMMAND"],
+    },
+    "install": {
+        "record": os.environ["INSTALL_RECORD"],
+        "installed": os.environ["INSTALL_TIME"],
+        "source": os.environ["INSTALL_SOURCE"],
+        "version": os.environ["INSTALL_VERSION"],
+        "git": os.environ["INSTALL_GIT"],
+        "http": os.environ["INSTALL_HTTP"],
+    },
+    "mining": {
+        "switch": os.environ["MINING_SWITCH"],
+        "backend": os.environ["BACKEND_SUMMARY"],
+        "hashrate_now": os.environ["HASHRATE_NOW"],
+        "hashrate_avg": os.environ["HASHRATE_AVG"],
+        "shares": os.environ["SHARES"],
+        "pool": os.environ["POOL"],
+    },
+    "http": {
+        "port": os.environ["PORT_STATUS"],
+        "dashboard": os.environ["DASHBOARD_STATUS"],
+        "api_auth": os.environ["API_AUTH_STATUS"],
+    },
+    "cluster": {
+        "enabled": os.environ["CLUSTER_ENABLED"],
+        "role": os.environ["CLUSTER_ROLE"],
+        "primary_url": os.environ["CLUSTER_URL"],
+        "token": os.environ["CLUSTER_TOKEN_STATE"],
+        "primary_service": os.environ["CLUSTER_PRIMARY_ACTIVE"],
+        "heartbeat_timer": os.environ["CLUSTER_TIMER_ACTIVE"],
+        "nodes": os.environ["CLUSTER_NODES"],
+    },
+    "backup": {"latest": os.environ["LATEST_BACKUP"]},
+    "events": events,
+}
+print(json.dumps(payload, indent=2))
+PY
+}
+
+main() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --short) OUTPUT_FORMAT="short" ;;
+      --json) OUTPUT_FORMAT="json" ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+
+  gather_all
+
+  case "${OUTPUT_FORMAT}" in
+    text) print_text ;;
+    short) print_short ;;
+    json) print_json ;;
+  esac
+
+  (( CRITICAL_COUNT == 0 ))
+}
+
+main "$@"

@@ -1,0 +1,387 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+ETC_DIR="/etc/veloxhash"
+CONFIG_FILE="/etc/veloxhash/config.json"
+SERVICE_NAME="veloxhash.service"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-policy <command>
+
+Commands:
+  status    Show policy settings and current decision
+  run       Apply policy once; used by systemd timer
+  enable    Enable automatic policy decisions
+  disable   Disable automatic policy decisions
+
+Default policy:
+  - keep dashboard/API online at boot
+  - stop mining when a non-service user was active in the last 15 minutes
+  - allow mining only outside 08:00-22:00
+  - stop mining when load1 is above CPU cores * 0.60
+  - configure CPU max-threads-hint to 50
+EOF
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "Please run as root." >&2
+    exit 1
+  fi
+}
+
+require_env_file() {
+  if [[ ! -x "${ETC_DIR}" && "${EUID}" -ne 0 ]]; then
+    echo "Cannot access ${ETC_DIR}. Run as root." >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "Missing ${ENV_FILE}. Install the service first." >&2
+    exit 1
+  fi
+}
+
+env_file_readable() {
+  [[ -x "${ETC_DIR}" && -r "${ENV_FILE}" ]]
+}
+
+get_env_value() {
+  local key="$1"
+  if env_file_readable; then
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+  fi
+}
+
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  python3 - "$ENV_FILE" "$key" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+line = f"{key}={value}"
+lines = path.read_text().splitlines()
+out = []
+updated = False
+for item in lines:
+    if item.startswith(f"{key}="):
+        out.append(line)
+        updated = True
+    else:
+        out.append(item)
+if not updated:
+    out.append(line)
+path.write_text("\n".join(out) + "\n")
+PY
+}
+
+fix_env_permissions() {
+  chmod 0640 "${ENV_FILE}"
+  chown root:veloxhash "${ENV_FILE}"
+}
+
+truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+verbose_output() {
+  [[ -t 1 ]] || truthy "${VELOXHASH_POLICY_VERBOSE:-0}"
+}
+
+cpu_cores() {
+  nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1'
+}
+
+load1() {
+  awk '{print $1}' /proc/loadavg
+}
+
+hour_now() {
+  date '+%H'
+}
+
+is_work_window() {
+  local hour start end
+  hour="${1}"
+  start="${VELOXHASH_POLICY_WORK_START:-$(get_env_value VELOXHASH_POLICY_WORK_START)}"
+  end="${VELOXHASH_POLICY_WORK_END:-$(get_env_value VELOXHASH_POLICY_WORK_END)}"
+  start="${start:-08}"
+  end="${end:-22}"
+
+  python3 - "$hour" "$start" "$end" <<'PY'
+import sys
+hour = int(sys.argv[1])
+start = int(sys.argv[2])
+end = int(sys.argv[3])
+if start == end:
+    print("false")
+elif start < end:
+    print("true" if start <= hour < end else "false")
+else:
+    print("true" if hour >= start or hour < end else "false")
+PY
+}
+
+load_busy() {
+  local load cores threshold
+  load="${1}"
+  cores="${2}"
+  threshold="${VELOXHASH_POLICY_LOAD_THRESHOLD:-$(get_env_value VELOXHASH_POLICY_LOAD_THRESHOLD)}"
+  threshold="${threshold:-0.60}"
+
+  python3 - "$load" "$cores" "$threshold" <<'PY'
+import sys
+load = float(sys.argv[1])
+cores = float(sys.argv[2])
+threshold = float(sys.argv[3])
+print("true" if load > cores * threshold else "false")
+PY
+}
+
+idle_to_minutes() {
+  local idle="$1"
+  python3 - "$idle" <<'PY'
+import re
+import sys
+
+idle = sys.argv[1].strip()
+if idle in ("", ".", "old"):
+    print(0 if idle == "." else 10**9)
+    raise SystemExit
+
+if idle.endswith("s") and idle[:-1].isdigit():
+    print(0)
+    raise SystemExit
+
+if ":" in idle:
+    parts = idle.split(":")
+    try:
+        if len(parts) == 2:
+            print(int(parts[0]) * 60 + int(parts[1]))
+        elif len(parts) == 3:
+            print(int(parts[0]) * 1440 + int(parts[1]) * 60 + int(parts[2]))
+        else:
+            print(10**9)
+    except ValueError:
+        print(10**9)
+    raise SystemExit
+
+match = re.fullmatch(r"(?:(\d+)days?)?(\d+)?", idle)
+if match:
+    days = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    print(days * 1440 + minutes)
+else:
+    print(10**9)
+PY
+}
+
+user_active() {
+  local window active user idle minutes
+  window="${VELOXHASH_POLICY_ACTIVE_MINUTES:-$(get_env_value VELOXHASH_POLICY_ACTIVE_MINUTES)}"
+  window="${window:-15}"
+  active="false"
+
+  if ! command -v who >/dev/null 2>&1; then
+    printf 'unknown'
+    return
+  fi
+
+  while read -r user _ _ _ idle _; do
+    [[ -z "${user}" ]] && continue
+    case "${user}" in
+      veloxhash) continue ;;
+    esac
+    minutes="$(idle_to_minutes "${idle:-old}")"
+    if [[ "${minutes}" =~ ^[0-9]+$ && "${minutes}" -le "${window}" ]]; then
+      active="true"
+      break
+    fi
+  done < <(who -u 2>/dev/null || true)
+
+  printf '%s' "${active}"
+}
+
+ensure_cpu_hint() {
+  local hint
+  hint="${VELOXHASH_POLICY_CPU_PERCENT:-$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)}"
+  hint="${hint:-50}"
+
+  python3 - "${CONFIG_FILE}" "${hint}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+hint = int(sys.argv[2])
+data = json.loads(path.read_text())
+cpu = data.setdefault("cpu", {})
+cpu["enabled"] = True
+cpu["yield"] = True
+cpu["max-threads-hint"] = hint
+data["autosave"] = False
+data["watch"] = False
+path.write_text(json.dumps(data, indent=4) + "\n")
+PY
+  chown veloxhash:veloxhash "${CONFIG_FILE}"
+  chmod 0640 "${CONFIG_FILE}"
+}
+
+set_mining_switch() {
+  local value="$1"
+  local current
+  current="$(get_env_value VELOXHASH_MINING_ENABLED)"
+  if [[ "${current:-0}" == "${value}" ]]; then
+    return 1
+  fi
+  set_env_value VELOXHASH_MINING_ENABLED "${value}"
+  fix_env_permissions
+  return 0
+}
+
+restart_service() {
+  systemctl restart "${SERVICE_NAME}"
+}
+
+decision() {
+  local policy_enabled hour cores load busy work_window active reason desired
+  policy_enabled="$(get_env_value VELOXHASH_POLICY_ENABLED)"
+  hour="$(hour_now)"
+  cores="$(cpu_cores)"
+  load="$(load1)"
+  busy="$(load_busy "${load}" "${cores}")"
+  work_window="$(is_work_window "${hour}")"
+  active="$(user_active)"
+  wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+
+  desired="0"
+  reason="policy disabled"
+  if truthy "${policy_enabled:-1}"; then
+    if [[ -z "${wallet}" || "${wallet}" == "YOUR_WALLET_ADDRESS" || "${wallet}" == "\${VELOXHASH_WALLET_ADDRESS}" ]]; then
+      reason="wallet not configured"
+    elif [[ "${wallet}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      reason="wallet value rejected"
+    elif [[ "${active}" == "true" ]]; then
+      reason="user active"
+    elif [[ "${work_window}" == "true" ]]; then
+      reason="work window"
+    elif [[ "${busy}" == "true" ]]; then
+      reason="cpu busy"
+    else
+      if [[ "${active}" == "unknown" ]]; then
+        reason="user activity unknown"
+      else
+        desired="1"
+        reason="allowed: off-hours, cpu idle, no active user"
+      fi
+    fi
+  fi
+
+  printf 'desired=%s\nreason=%s\nhour=%s\ncores=%s\nload1=%s\nbusy=%s\nwork_window=%s\nuser_active=%s\n' \
+    "${desired}" "${reason}" "${hour}" "${cores}" "${load}" "${busy}" "${work_window}" "${active}"
+}
+
+status() {
+  local policy_enabled mining wallet cpu_percent work_start work_end load_threshold active_minutes
+  policy_enabled="$(get_env_value VELOXHASH_POLICY_ENABLED)"
+  mining="$(get_env_value VELOXHASH_MINING_ENABLED)"
+  wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+  cpu_percent="$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)"
+  work_start="$(get_env_value VELOXHASH_POLICY_WORK_START)"
+  work_end="$(get_env_value VELOXHASH_POLICY_WORK_END)"
+  load_threshold="$(get_env_value VELOXHASH_POLICY_LOAD_THRESHOLD)"
+  active_minutes="$(get_env_value VELOXHASH_POLICY_ACTIVE_MINUTES)"
+
+  if env_file_readable; then
+    printf 'env-readable: true\n'
+    printf 'policy: %s\n' "${policy_enabled:-1}"
+    printf 'mining: %s\n' "${mining:-0}"
+    if [[ -n "${wallet}" && "${wallet}" != "YOUR_WALLET_ADDRESS" && "${wallet}" != "\${VELOXHASH_WALLET_ADDRESS}" ]]; then
+      printf 'wallet: configured\n'
+    else
+      printf 'wallet: not configured\n'
+    fi
+  else
+    printf 'env-readable: false\n'
+    printf 'policy: unknown (using defaults for this status)\n'
+    printf 'mining: unknown\n'
+    printf 'wallet: unknown\n'
+  fi
+  printf 'cpu-percent: %s\n' "${cpu_percent:-50}"
+  printf 'work-window: %s-%s\n' "${work_start:-08}" "${work_end:-22}"
+  printf 'load-threshold: %s\n' "${load_threshold:-0.60}"
+  printf 'active-minutes: %s\n' "${active_minutes:-15}"
+  decision
+  systemctl show "${SERVICE_NAME}" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
+}
+
+run_policy() {
+  require_root
+  require_env_file
+  ensure_cpu_hint
+
+  local data desired reason
+  data="$(decision)"
+  desired="$(printf '%s\n' "${data}" | sed -n 's/^desired=//p')"
+  reason="$(printf '%s\n' "${data}" | sed -n 's/^reason=//p')"
+
+  if set_mining_switch "${desired}"; then
+    restart_service
+    printf 'policy applied: mining=%s reason=%s\n' "${desired}" "${reason}"
+  else
+    if verbose_output; then
+      printf 'policy unchanged: mining=%s reason=%s\n' "${desired}" "${reason}"
+    fi
+  fi
+}
+
+enable_policy() {
+  require_root
+  require_env_file
+  set_env_value VELOXHASH_POLICY_ENABLED 1
+  [[ -n "$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)" ]] || set_env_value VELOXHASH_POLICY_CPU_PERCENT 50
+  [[ -n "$(get_env_value VELOXHASH_POLICY_WORK_START)" ]] || set_env_value VELOXHASH_POLICY_WORK_START 08
+  [[ -n "$(get_env_value VELOXHASH_POLICY_WORK_END)" ]] || set_env_value VELOXHASH_POLICY_WORK_END 22
+  [[ -n "$(get_env_value VELOXHASH_POLICY_LOAD_THRESHOLD)" ]] || set_env_value VELOXHASH_POLICY_LOAD_THRESHOLD 0.60
+  [[ -n "$(get_env_value VELOXHASH_POLICY_ACTIVE_MINUTES)" ]] || set_env_value VELOXHASH_POLICY_ACTIVE_MINUTES 15
+  fix_env_permissions
+  ensure_cpu_hint
+  systemctl enable --now veloxhash-policy.timer
+  echo "VeloxHash policy enabled."
+}
+
+disable_policy() {
+  require_root
+  require_env_file
+  set_env_value VELOXHASH_POLICY_ENABLED 0
+  set_mining_switch 0 || true
+  fix_env_permissions
+  systemctl disable --now veloxhash-policy.timer 2>/dev/null || true
+  restart_service
+  echo "VeloxHash policy disabled and mining stopped."
+}
+
+command="${1:-}"
+
+case "${command}" in
+  status) status ;;
+  run) run_policy ;;
+  enable) enable_policy ;;
+  disable) disable_policy ;;
+  -h|--help|help|"") usage ;;
+  *)
+    echo "Unknown command: ${command}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

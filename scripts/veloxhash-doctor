@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+
+set -u
+
+SERVICE_NAME="veloxhash.service"
+ETC_DIR="/etc/veloxhash"
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+CONFIG_FILE="/etc/veloxhash/config.json"
+INSTALL_INFO="/etc/veloxhash/install-info.json"
+PORT="${VELOXHASH_DOCTOR_PORT:-8089}"
+HOST="${VELOXHASH_DOCTOR_HOST:-127.0.0.1}"
+BASE_URL="http://${HOST}:${PORT}"
+
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+
+green() { printf '\033[32m%s\033[0m' "$1"; }
+yellow() { printf '\033[33m%s\033[0m' "$1"; }
+red() { printf '\033[31m%s\033[0m' "$1"; }
+
+pass() {
+  PASS_COUNT=$((PASS_COUNT + 1))
+  printf '%s %s\n' "$(green PASS)" "$*"
+}
+
+warn() {
+  WARN_COUNT=$((WARN_COUNT + 1))
+  printf '%s %s\n' "$(yellow WARN)" "$*"
+}
+
+fail() {
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+  printf '%s %s\n' "$(red FAIL)" "$*"
+}
+
+info() {
+  printf '%s %s\n' "INFO" "$*"
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+get_env_value() {
+  local key="$1"
+  if [[ -r "${ENV_FILE}" ]]; then
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+  fi
+}
+
+can_traverse_config_dir() {
+  [[ -x "${ETC_DIR}" ]]
+}
+
+http_get() {
+  local url="$1"
+  shift
+  curl -fsS --connect-timeout 2 --max-time 5 "$@" "${url}"
+}
+
+json_field() {
+  local expression="$1"
+  python3 -c "import json,sys; data=json.load(sys.stdin); ${expression}"
+}
+
+print_header() {
+  printf 'VeloxHash doctor\n'
+  printf 'Target: %s\n\n' "${BASE_URL}"
+}
+
+check_binary() {
+  if [[ -x /usr/local/bin/veloxhash ]]; then
+    pass "binary installed: /usr/local/bin/veloxhash"
+    /usr/local/bin/veloxhash --version 2>/dev/null | sed -n '1,3p' | sed 's/^/INFO version: /'
+  else
+    fail "missing binary: /usr/local/bin/veloxhash"
+  fi
+}
+
+check_files() {
+  [[ -f /etc/systemd/system/veloxhash.service ]] && pass "systemd unit installed" || fail "missing /etc/systemd/system/veloxhash.service"
+  [[ -f /etc/systemd/system/veloxhash-policy.service ]] && pass "policy systemd unit installed" || warn "missing /etc/systemd/system/veloxhash-policy.service"
+  [[ -f /etc/systemd/system/veloxhash-policy.timer ]] && pass "policy timer installed" || warn "missing /etc/systemd/system/veloxhash-policy.timer"
+  [[ -f /etc/systemd/system/veloxhash-cluster-primary.service ]] && pass "cluster primary unit installed" || warn "missing /etc/systemd/system/veloxhash-cluster-primary.service"
+  [[ -f /etc/systemd/system/veloxhash-cluster-heartbeat.timer ]] && pass "cluster heartbeat timer installed" || warn "missing /etc/systemd/system/veloxhash-cluster-heartbeat.timer"
+  [[ -x /usr/local/lib/veloxhash/veloxhash-run ]] && pass "systemd runner installed" || fail "missing /usr/local/lib/veloxhash/veloxhash-run"
+  [[ -x /usr/local/bin/veloxhash-mining ]] && pass "mining control installed" || warn "missing /usr/local/bin/veloxhash-mining"
+  [[ -x /usr/local/bin/veloxhash-policy ]] && pass "policy command installed" || warn "missing /usr/local/bin/veloxhash-policy"
+  [[ -x /usr/local/bin/veloxhash-cluster ]] && pass "cluster command installed" || warn "missing /usr/local/bin/veloxhash-cluster"
+  [[ -x /usr/local/bin/veloxhash-status ]] && pass "status command installed" || warn "missing /usr/local/bin/veloxhash-status"
+  [[ -x /usr/local/bin/veloxhash-validate ]] && pass "validate command installed" || warn "missing /usr/local/bin/veloxhash-validate"
+  [[ -x /usr/local/bin/veloxhash-backup ]] && pass "backup command installed" || warn "missing /usr/local/bin/veloxhash-backup"
+  [[ -x /usr/local/bin/veloxhash-restore ]] && pass "restore command installed" || warn "missing /usr/local/bin/veloxhash-restore"
+  [[ -x /usr/local/bin/veloxhash-uninstall ]] && pass "uninstall command installed" || warn "missing /usr/local/bin/veloxhash-uninstall"
+  [[ -x /usr/local/bin/veloxhash-upgrade ]] && pass "upgrade command installed" || warn "missing /usr/local/bin/veloxhash-upgrade"
+  [[ -f /etc/logrotate.d/veloxhash ]] && pass "logrotate installed" || warn "missing /etc/logrotate.d/veloxhash"
+
+  if [[ ! -d "${ETC_DIR}" ]]; then
+    fail "missing config directory: ${ETC_DIR}"
+    return
+  fi
+
+  if ! can_traverse_config_dir; then
+    warn "config directory exists but is not accessible by this user: ${ETC_DIR}; run as root for full file checks"
+    return
+  fi
+
+  if [[ -r "${CONFIG_FILE}" ]]; then
+    pass "config present and readable: ${CONFIG_FILE}"
+  elif [[ -f "${CONFIG_FILE}" ]]; then
+    warn "config exists but is not readable by this user: ${CONFIG_FILE}"
+  else
+    fail "missing ${CONFIG_FILE}"
+  fi
+
+  if [[ -r "${ENV_FILE}" ]]; then
+    pass "environment present and readable: ${ENV_FILE}"
+  elif [[ -f "${ENV_FILE}" ]]; then
+    warn "environment exists but is not readable by this user: ${ENV_FILE}"
+  else
+    fail "missing ${ENV_FILE}"
+  fi
+
+  if [[ -r "${INSTALL_INFO}" ]]; then
+    pass "install record present and readable: ${INSTALL_INFO}"
+    if have python3; then
+      python3 - "${INSTALL_INFO}" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+version = data.get("binary_version") or []
+git = data.get("git") or {}
+print(f"INFO installed_at: {data.get('installed_at_utc', 'unknown')}")
+print(f"INFO source_root: {data.get('source_root', 'unknown')}")
+print(f"INFO installed_version: {version[0] if version else 'unknown'}")
+print(f"INFO installed_git: {git.get('branch', 'unknown')}@{(git.get('commit') or '')[:12]} dirty={git.get('dirty', 'unknown')}")
+PY
+    fi
+  elif [[ -f "${INSTALL_INFO}" ]]; then
+    warn "install record exists but is not readable by this user: ${INSTALL_INFO}"
+  else
+    warn "missing install record: ${INSTALL_INFO}"
+  fi
+}
+
+check_service() {
+  if ! have systemctl; then
+    warn "systemctl not available"
+    return
+  fi
+
+  local active sub pid restarts
+  active="$(systemctl show "${SERVICE_NAME}" -p ActiveState --value 2>/dev/null)"
+  sub="$(systemctl show "${SERVICE_NAME}" -p SubState --value 2>/dev/null)"
+  pid="$(systemctl show "${SERVICE_NAME}" -p MainPID --value 2>/dev/null)"
+  restarts="$(systemctl show "${SERVICE_NAME}" -p NRestarts --value 2>/dev/null)"
+
+  if [[ "${active}" == "active" && "${sub}" == "running" ]]; then
+    pass "service running: ${SERVICE_NAME} pid=${pid:-unknown}"
+  else
+    fail "service not running: ActiveState=${active:-unknown} SubState=${sub:-unknown}"
+  fi
+
+  local timer_active timer_next
+  timer_active="$(systemctl show veloxhash-policy.timer -p ActiveState --value 2>/dev/null)"
+  timer_next="$(systemctl show veloxhash-policy.timer -p NextElapseUSecRealtime --value 2>/dev/null)"
+  if [[ "${timer_active}" == "active" ]]; then
+    pass "policy timer active: next=${timer_next:-unknown}"
+  else
+    warn "policy timer not active: ActiveState=${timer_active:-unknown}"
+  fi
+
+  if [[ "${restarts:-0}" =~ ^[0-9]+$ ]]; then
+    if (( restarts > 5 )); then
+      warn "service restart count is high: ${restarts}"
+    else
+      pass "service restart count: ${restarts}"
+    fi
+  else
+    warn "unable to read service restart count"
+  fi
+}
+
+check_port() {
+  if have ss; then
+    if ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${PORT}$"; then
+      pass "port ${PORT} is listening"
+    else
+      fail "port ${PORT} is not listening"
+    fi
+  else
+    warn "ss not available; skipping port listener check"
+  fi
+}
+
+check_env() {
+  local token wallet mining
+  token="$(get_env_value VELOXHASH_API_TOKEN)"
+  wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+  mining="$(get_env_value VELOXHASH_MINING_ENABLED)"
+
+  if [[ -n "${token}" ]]; then
+    pass "API token is configured"
+  elif [[ -d "${ETC_DIR}" && ! -x "${ETC_DIR}" ]]; then
+    warn "API token cannot be checked because ${ETC_DIR} is not accessible by this user"
+  elif [[ -f "${ENV_FILE}" && ! -r "${ENV_FILE}" ]]; then
+    warn "API token cannot be checked without permission"
+  else
+    fail "API token is missing"
+  fi
+
+  case "${mining:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      info "mining switch: enabled"
+      ;;
+    0|false|FALSE|no|NO|off|OFF|"")
+      info "mining switch: disabled"
+      ;;
+    *)
+      warn "mining switch has unusual value: ${mining}"
+      ;;
+  esac
+
+  if [[ -n "${wallet}" && "${wallet}" != "YOUR_WALLET_ADDRESS" && "${wallet}" != "\${VELOXHASH_WALLET_ADDRESS}" ]]; then
+    if [[ "${wallet}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      fail "wallet value looks like a private key; use the public address only"
+    else
+      pass "public wallet address is configured"
+    fi
+  else
+    warn "public wallet address is not configured; mining will remain disabled"
+  fi
+}
+
+check_http() {
+  local token summary backends status_code
+  token="$(get_env_value VELOXHASH_API_TOKEN)"
+
+  if http_get "${BASE_URL}/" >/dev/null 2>&1; then
+    pass "dashboard HTML reachable"
+  else
+    fail "dashboard HTML is not reachable at ${BASE_URL}/"
+  fi
+
+  status_code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "${BASE_URL}/1/summary" 2>/dev/null)"
+  if [[ "${status_code}" == "401" || "${status_code}" == "403" ]]; then
+    pass "unauthenticated API is protected (${status_code})"
+  elif [[ "${status_code}" == "200" ]]; then
+    warn "unauthenticated API returned 200; verify token restrictions"
+  else
+    warn "unauthenticated API returned ${status_code:-no response}"
+  fi
+
+  if [[ -z "${token}" ]]; then
+    warn "skipping authenticated API checks because token is unavailable"
+    return
+  fi
+
+  summary="$(http_get "${BASE_URL}/1/summary" -H "Authorization: Bearer ${token}" 2>/dev/null)"
+  if [[ -n "${summary}" ]]; then
+    pass "authenticated summary API reachable"
+    printf '%s' "${summary}" | json_field 'print("INFO uptime:", data.get("uptime")); print("INFO paused:", data.get("paused")); print("INFO algorithms:", len(data.get("algorithms", [])))' 2>/dev/null || warn "summary JSON parse failed"
+  else
+    fail "authenticated summary API failed"
+  fi
+
+  backends="$(http_get "${BASE_URL}/2/backends" -H "Authorization: Bearer ${token}" 2>/dev/null)"
+  if [[ -n "${backends}" ]]; then
+    pass "backends API reachable"
+    printf '%s' "${backends}" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+enabled = [b for b in data if b.get("enabled")]
+print(f"INFO backends: {len(data)} total, {len(enabled)} enabled")
+for b in data:
+    threads = len(b.get("threads", []) or [])
+    backend_type = b.get("type", "unknown")
+    backend_enabled = b.get("enabled")
+    backend_algo = b.get("algo")
+    print(f"INFO backend {backend_type}: enabled={backend_enabled} algo={backend_algo} threads={threads}")
+' 2>/dev/null || warn "backends JSON parse failed"
+  else
+    fail "backends API failed"
+  fi
+}
+
+main() {
+  print_header
+  check_binary
+  check_files
+  check_service
+  check_port
+  check_env
+  check_http
+
+  printf '\nSummary: %s pass, %s warn, %s fail\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
+  if (( FAIL_COUNT > 0 )); then
+    exit 1
+  fi
+}
+
+main "$@"

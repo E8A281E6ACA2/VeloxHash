@@ -1,0 +1,13 @@
+[Unit]
+Description=Run VeloxHash automatic mining policy every minute
+Documentation=file:/etc/veloxhash/README.systemd
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=veloxhash-policy.service
+
+[Install]
+WantedBy=timers.target

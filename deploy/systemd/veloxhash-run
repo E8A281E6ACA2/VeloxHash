@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${VELOXHASH_API_TOKEN:?VELOXHASH_API_TOKEN is required}"
+
+ARGS=(
+  --config=/etc/veloxhash/config.json
+  --http-host=0.0.0.0
+  --http-port=8089
+  --http-access-token="${VELOXHASH_API_TOKEN}"
+  --http-no-restricted
+  --log-file=/var/log/veloxhash/veloxhash.log
+)
+
+is_wallet_configured() {
+  local value="${1:-}"
+  [[ -n "${value}" ]] || return 1
+  [[ "${value}" != "YOUR_WALLET_ADDRESS" ]] || return 1
+  [[ "${value}" != "\${VELOXHASH_WALLET_ADDRESS}" ]] || return 1
+  [[ ! "${value}" =~ ^[[:space:]]+$ ]] || return 1
+}
+
+case "${VELOXHASH_MINING_ENABLED:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    if is_wallet_configured "${VELOXHASH_WALLET_ADDRESS:-}"; then
+      rig_id="${VELOXHASH_RIG_ID:-}"
+      if [[ -z "${rig_id}" ]]; then
+        rig_id="$(hostname -s 2>/dev/null || printf 'veloxhash')"
+      fi
+      ARGS+=(
+        --url="${VELOXHASH_POOL_URL:-pool.supportxmr.com:3333}"
+        --user="${VELOXHASH_WALLET_ADDRESS}"
+        --pass="${VELOXHASH_POOL_PASSWORD:-x}"
+        --rig-id="${rig_id}"
+        --coin="${VELOXHASH_COIN:-monero}"
+        --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-50}"
+        --donate-level=0
+      )
+    else
+      printf '%s\n' "VeloxHash wallet address is not configured; keeping CPU mining disabled." >&2
+      ARGS+=(--no-cpu)
+    fi
+    ;;
+  *)
+    ARGS+=(--no-cpu)
+    ;;
+esac
+
+exec /usr/local/bin/veloxhash "${ARGS[@]}"

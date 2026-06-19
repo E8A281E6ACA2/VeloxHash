@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+
+set -u
+
+SERVICE_NAME="veloxhash.service"
+ETC_DIR="/etc/veloxhash"
+CONFIG_FILE="/etc/veloxhash/config.json"
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+EXPECTED_HOST="${VELOXHASH_EXPECTED_HTTP_HOST:-0.0.0.0}"
+EXPECTED_PORT="${VELOXHASH_EXPECTED_HTTP_PORT:-8089}"
+
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+OUTPUT_FORMAT="text"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-validate [--json]
+
+Validates the installed VeloxHash service configuration:
+  - config JSON syntax and expected HTTP settings
+  - API token and mining switch in /etc/veloxhash/veloxhash.env
+  - file ownership and permissions
+  - systemd unit and runner presence
+  - port listener ownership
+
+Options:
+  --json      Print machine-readable JSON
+  -h, --help  Show this help
+EOF
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+record() {
+  local level="$1"
+  local key="$2"
+  local message="$3"
+
+  case "${level}" in
+    PASS) PASS_COUNT=$((PASS_COUNT + 1)) ;;
+    WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+    FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+  esac
+
+  if [[ "${OUTPUT_FORMAT}" == "json" ]]; then
+    RESULTS="${RESULTS}${level}|${key}|${message}"$'\n'
+  else
+    printf '%-4s %-18s %s\n' "${level}" "${key}" "${message}"
+  fi
+}
+
+pass() { record PASS "$1" "$2"; }
+warn() { record WARN "$1" "$2"; }
+fail() { record FAIL "$1" "$2"; }
+
+get_env_value() {
+  local key="$1"
+  if [[ -x "${ETC_DIR}" && -r "${ENV_FILE}" ]]; then
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+  fi
+}
+
+config_field() {
+  local expression="$1"
+  python3 - "${CONFIG_FILE}" "${expression}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text())
+value = eval(sys.argv[2], {"data": data})
+if value is None:
+    print("")
+elif isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+PY
+}
+
+check_files() {
+  if [[ ! -d "${ETC_DIR}" ]]; then
+    fail files "missing ${ETC_DIR}"
+    return
+  fi
+
+  if [[ ! -x "${ETC_DIR}" ]]; then
+    warn files "${ETC_DIR} exists but this user cannot access it; run as root for full validation"
+    return
+  fi
+
+  [[ -r "${CONFIG_FILE}" ]] && pass files "config readable" || fail files "config not readable: ${CONFIG_FILE}"
+  [[ -r "${ENV_FILE}" ]] && pass files "environment readable" || fail files "environment not readable: ${ENV_FILE}"
+  [[ -f /etc/systemd/system/veloxhash.service ]] && pass files "systemd unit present" || fail files "missing systemd unit"
+  [[ -f /etc/systemd/system/veloxhash-policy.timer ]] && pass files "policy timer unit present" || warn files "missing policy timer unit"
+  [[ -f /etc/systemd/system/veloxhash-cluster-primary.service ]] && pass files "cluster primary unit present" || warn files "missing cluster primary unit"
+  [[ -f /etc/systemd/system/veloxhash-cluster-heartbeat.timer ]] && pass files "cluster heartbeat timer present" || warn files "missing cluster heartbeat timer"
+  [[ -x /usr/local/lib/veloxhash/veloxhash-run ]] && pass files "runner executable present" || fail files "missing runner"
+  [[ -x /usr/local/bin/veloxhash ]] && pass files "binary executable present" || fail files "missing binary"
+  [[ -x /usr/local/bin/veloxhash-policy ]] && pass files "policy command present" || warn files "missing policy command"
+  [[ -x /usr/local/bin/veloxhash-cluster ]] && pass files "cluster command present" || warn files "missing cluster command"
+}
+
+check_config() {
+  if [[ ! -r "${CONFIG_FILE}" ]]; then
+    return
+  fi
+
+  if ! have python3; then
+    warn config "python3 unavailable; skipping JSON validation"
+    return
+  fi
+
+  if ! python3 -m json.tool "${CONFIG_FILE}" >/dev/null 2>&1; then
+    fail config "invalid JSON: ${CONFIG_FILE}"
+    return
+  fi
+  pass config "valid JSON"
+
+  local http_enabled http_host http_port http_restricted http_token pools_count cpu_hint cpu_yield
+  http_enabled="$(config_field 'data.get("http", {}).get("enabled")' 2>/dev/null || true)"
+  http_host="$(config_field 'data.get("http", {}).get("host")' 2>/dev/null || true)"
+  http_port="$(config_field 'data.get("http", {}).get("port")' 2>/dev/null || true)"
+  http_restricted="$(config_field 'data.get("http", {}).get("restricted")' 2>/dev/null || true)"
+  http_token="$(config_field 'data.get("http", {}).get("access-token")' 2>/dev/null || true)"
+  pools_count="$(config_field 'len(data.get("pools", []) or [])' 2>/dev/null || true)"
+  cpu_hint="$(config_field 'data.get("cpu", {}).get("max-threads-hint")' 2>/dev/null || true)"
+  cpu_yield="$(config_field 'data.get("cpu", {}).get("yield")' 2>/dev/null || true)"
+
+  [[ "${http_enabled}" == "true" ]] && pass config "HTTP enabled" || fail config "HTTP should be enabled"
+  [[ "${http_host}" == "${EXPECTED_HOST}" ]] && pass config "HTTP host ${http_host}" || warn config "HTTP host is ${http_host:-empty}; expected ${EXPECTED_HOST}"
+  [[ "${http_port}" == "${EXPECTED_PORT}" ]] && pass config "HTTP port ${http_port}" || warn config "HTTP port is ${http_port:-empty}; expected ${EXPECTED_PORT}"
+
+  if [[ "${http_restricted}" == "true" ]]; then
+    pass config "config keeps HTTP restricted; runner supplies --http-no-restricted with token"
+  else
+    warn config "config HTTP restricted is ${http_restricted:-empty}; verify API exposure"
+  fi
+
+  if [[ -z "${http_token}" ]]; then
+    pass config "config does not store API token"
+  else
+    warn config "config stores an API token; systemd env token is preferred"
+  fi
+
+  if [[ "${http_host}" == "0.0.0.0" ]]; then
+    local env_token
+    env_token="$(get_env_value VELOXHASH_API_TOKEN)"
+    if [[ "${#env_token}" -ge 24 ]]; then
+      pass config "network-exposed API has systemd token"
+    else
+      fail config "HTTP binds to 0.0.0.0 but API token is unavailable"
+    fi
+  fi
+
+  if [[ "${pools_count}" =~ ^[0-9]+$ && "${pools_count}" -gt 0 ]]; then
+    pass config "pool entries: ${pools_count}"
+  else
+    warn config "no pool entries found"
+  fi
+
+  [[ "${cpu_hint}" == "50" ]] && pass config "CPU max-threads-hint is 50" || warn config "CPU max-threads-hint is ${cpu_hint:-empty}; expected 50"
+  [[ "${cpu_yield}" == "true" ]] && pass config "CPU yield enabled" || warn config "CPU yield is ${cpu_yield:-empty}; expected true"
+}
+
+check_env() {
+  if [[ ! -x "${ETC_DIR}" || ! -r "${ENV_FILE}" ]]; then
+    return
+  fi
+
+  local token wallet mining policy cluster_enabled cluster_role cluster_port
+  token="$(get_env_value VELOXHASH_API_TOKEN)"
+  wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+  mining="$(get_env_value VELOXHASH_MINING_ENABLED)"
+  policy="$(get_env_value VELOXHASH_POLICY_ENABLED)"
+  active_minutes="$(get_env_value VELOXHASH_POLICY_ACTIVE_MINUTES)"
+  cluster_enabled="$(get_env_value VELOXHASH_CLUSTER_ENABLED)"
+  cluster_role="$(get_env_value VELOXHASH_CLUSTER_ROLE)"
+  cluster_port="$(get_env_value VELOXHASH_CLUSTER_PORT)"
+
+  if [[ "${#token}" -ge 24 ]]; then
+    pass env "API token configured"
+  else
+    fail env "API token missing or too short"
+  fi
+
+  case "${mining:-0}" in
+    1|true|TRUE|yes|YES|on|ON|0|false|FALSE|no|NO|off|OFF|"")
+      pass env "mining switch value accepted: ${mining:-0}"
+      ;;
+    *)
+      fail env "invalid VELOXHASH_MINING_ENABLED=${mining}"
+      ;;
+  esac
+
+  if [[ -n "${wallet}" && "${wallet}" != "YOUR_WALLET_ADDRESS" && "${wallet}" != "\${VELOXHASH_WALLET_ADDRESS}" ]]; then
+    if [[ "${wallet}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      fail env "VELOXHASH_WALLET_ADDRESS looks like a private key; use the public address only"
+    else
+      pass env "public wallet address configured"
+    fi
+  else
+    warn env "public wallet address not configured; mining will remain disabled"
+  fi
+
+  case "${policy:-1}" in
+    1|true|TRUE|yes|YES|on|ON|0|false|FALSE|no|NO|off|OFF|"")
+      pass env "policy switch value accepted: ${policy:-1}"
+      ;;
+    *)
+      fail env "invalid VELOXHASH_POLICY_ENABLED=${policy}"
+      ;;
+  esac
+
+  if [[ "${active_minutes:-15}" =~ ^[0-9]+$ && "${active_minutes:-15}" -ge 1 ]]; then
+    pass env "active user window accepted: ${active_minutes:-15} minutes"
+  else
+    fail env "invalid VELOXHASH_POLICY_ACTIVE_MINUTES=${active_minutes}"
+  fi
+
+  case "${cluster_enabled:-0}" in
+    1|true|TRUE|yes|YES|on|ON|0|false|FALSE|no|NO|off|OFF|"")
+      pass env "cluster switch value accepted: ${cluster_enabled:-0}"
+      ;;
+    *)
+      fail env "invalid VELOXHASH_CLUSTER_ENABLED=${cluster_enabled}"
+      ;;
+  esac
+
+  case "${cluster_role:-standalone}" in
+    standalone|primary|worker)
+      pass env "cluster role accepted: ${cluster_role:-standalone}"
+      ;;
+    *)
+      fail env "invalid VELOXHASH_CLUSTER_ROLE=${cluster_role}"
+      ;;
+  esac
+
+  if [[ "${cluster_port:-8090}" =~ ^[0-9]+$ && "${cluster_port:-8090}" -ge 1 && "${cluster_port:-8090}" -le 65535 ]]; then
+    pass env "cluster port accepted: ${cluster_port:-8090}"
+  else
+    fail env "invalid VELOXHASH_CLUSTER_PORT=${cluster_port}"
+  fi
+}
+
+check_permissions() {
+  if [[ ! -x "${ETC_DIR}" ]]; then
+    return
+  fi
+
+  local env_mode config_mode env_owner config_owner
+  env_mode="$(stat -c '%a' "${ENV_FILE}" 2>/dev/null || true)"
+  config_mode="$(stat -c '%a' "${CONFIG_FILE}" 2>/dev/null || true)"
+  env_owner="$(stat -c '%U:%G' "${ENV_FILE}" 2>/dev/null || true)"
+  config_owner="$(stat -c '%U:%G' "${CONFIG_FILE}" 2>/dev/null || true)"
+
+  [[ "${env_mode}" == "640" ]] && pass perms "env mode 0640" || warn perms "env mode is ${env_mode:-unknown}; expected 640"
+  [[ "${config_mode}" == "640" ]] && pass perms "config mode 0640" || warn perms "config mode is ${config_mode:-unknown}; expected 640"
+  [[ "${env_owner}" == "root:veloxhash" ]] && pass perms "env owner root:veloxhash" || warn perms "env owner is ${env_owner:-unknown}"
+  [[ "${config_owner}" == "veloxhash:veloxhash" ]] && pass perms "config owner veloxhash:veloxhash" || warn perms "config owner is ${config_owner:-unknown}"
+}
+
+check_port() {
+  if ! have ss; then
+    warn port "ss unavailable; skipping port check"
+    return
+  fi
+
+  local listeners
+  listeners="$(ss -ltnp 2>/dev/null | awk -v port=":${EXPECTED_PORT}" '$4 ~ port "$" {print}')"
+  if [[ -z "${listeners}" ]]; then
+    warn port "${EXPECTED_PORT} is not listening now"
+    return
+  fi
+
+  if printf '%s\n' "${listeners}" | grep -q 'veloxhash'; then
+    pass port "${EXPECTED_PORT} is owned by veloxhash"
+  elif [[ "${EUID}" -ne 0 ]]; then
+    pass port "${EXPECTED_PORT} is listening (run as root to verify process owner)"
+  else
+    warn port "${EXPECTED_PORT} is listening; verify owner: ${listeners}"
+  fi
+}
+
+print_json() {
+  RESULTS="${RESULTS:-}" python3 - "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" <<'PY'
+import json
+import os
+import sys
+
+items = []
+for line in os.environ.get("RESULTS", "").splitlines():
+    level, key, message = line.split("|", 2)
+    items.append({"level": level, "key": key, "message": message})
+
+print(json.dumps({
+    "status": "FAIL" if int(sys.argv[3]) else ("WARN" if int(sys.argv[2]) else "OK"),
+    "pass": int(sys.argv[1]),
+    "warn": int(sys.argv[2]),
+    "fail": int(sys.argv[3]),
+    "checks": items,
+}, indent=2))
+PY
+}
+
+main() {
+  RESULTS=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --json)
+        OUTPUT_FORMAT="json"
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "${OUTPUT_FORMAT}" != "json" ]]; then
+    printf 'VeloxHash validation\n\n'
+  fi
+
+  check_files
+  check_config
+  check_env
+  check_permissions
+  check_port
+
+  if [[ "${OUTPUT_FORMAT}" == "json" ]]; then
+    print_json
+  else
+    printf '\nSummary: %s pass, %s warn, %s fail\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
+  fi
+
+  (( FAIL_COUNT == 0 ))
+}
+
+main "$@"

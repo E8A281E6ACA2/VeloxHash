@@ -1,0 +1,66 @@
+{
+    "autosave": true,
+    "background": false,
+    "colors": true,
+
+    "cpu": {
+        "enabled": true,
+        "huge-pages": true,
+        "huge-pages-jit": false,
+        "hw-aes": null,
+        "priority": null,
+        "memory-pool": false,
+        "yield": true,
+        "asm": true,
+        "argon2-impl": null
+    },
+
+    "opencl": {
+        "enabled": false
+    },
+
+    "cuda": {
+        "enabled": false
+    },
+
+    "pools": [
+        {
+            "algo": null,
+            "coin": "monero",
+            "url": "pool.supportxmr.com:3333",
+            "user": "${VELOXHASH_WALLET_ADDRESS}",
+            "pass": "${VELOXHASH_POOL_PASSWORD}",
+            "rig-id": "${VELOXHASH_RIG_ID}",
+            "nicehash": false,
+            "keepalive": true,
+            "enabled": true,
+            "tls": false,
+            "tls-fingerprint": null,
+            "daemon": false
+        }
+    ],
+
+    "donate-level": 0,
+    "donate-over-proxy": 0,
+
+    "log-file": "/home/veloxhash/logs/veloxhash.log",
+    "print-time": 60,
+    "health-print-time": 60,
+
+    "http": {
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 8089,
+        "access-token": null,
+        "restricted": true
+    },
+
+    "retries": 5,
+    "retry-pause": 5,
+    "syslog": false,
+    "user-agent": null,
+    "verbose": 0,
+    "watch": true,
+    "pause-on-battery": false,
+    "pause-on-active": false
+}
