@@ -9,6 +9,24 @@
 缓存目录安装并启动。源码会放在 `~/.cache/veloxhash/source`：
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- <公开钱包地址>
+```
+
+如果要安装系统级开机启动服务：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | sudo bash -s -- --mode system <公开钱包地址>
+```
+
+只下载到 `~/.cache`，先不安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- --download-only
+```
+
+手动缓存安装：
+
+```bash
 sudo apt-get update
 sudo apt-get install -y git curl
 mkdir -p ~/.cache/veloxhash

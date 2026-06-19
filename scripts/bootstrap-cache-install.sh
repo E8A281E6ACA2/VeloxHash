@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_URL="${VELOXHASH_REPO_URL:-https://github.com/E8A281E6ACA2/VeloxHash.git}"
-REF="${VELOXHASH_REF:-master}"
+REF="${VELOXHASH_REF:-main}"
 CACHE_ROOT="${VELOXHASH_CACHE_ROOT:-${HOME}/.cache/veloxhash}"
 SOURCE_DIR="${VELOXHASH_SOURCE_DIR:-${CACHE_ROOT}/source}"
 USER_PREFIX="${VELOXHASH_USER_PREFIX:-${CACHE_ROOT}/runtime}"
@@ -39,7 +39,7 @@ Options:
   --wallet ADDRESS   Public pool payout wallet address
   --mode MODE        auto, system, or user; default: auto
   --repo URL         Git repository URL
-  --ref REF          Git branch/tag/commit, default: master
+  --ref REF          Git branch/tag/commit, default: main
   --cache-dir DIR    Cache root, default: ~/.cache/veloxhash
   --skip-apt         Do not install apt build dependencies
   --skip-build       Install existing build output from the cached source tree

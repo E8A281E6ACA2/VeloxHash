@@ -54,6 +54,26 @@ Run as `root` to install the system service. Run as a normal user to install
 user mode under `~/.cache/veloxhash/runtime`; user mode does not write to
 `/etc` or `/usr/local/bin`.
 
+One-line cache install from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- <public-wallet-address>
+```
+
+Force a system service install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | sudo bash -s -- --mode system <public-wallet-address>
+```
+
+Download/update only, without installing:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- --download-only
+```
+
+Manual cache install:
+
 ```bash
 sudo apt-get update
 sudo apt-get install -y git curl
@@ -65,10 +85,6 @@ else
 fi
 bash ~/.cache/veloxhash/source/scripts/bootstrap-cache-install.sh <public-wallet-address>
 ```
-
-For private repositories, configure GitHub access on the host before cloning.
-If the repository is made public, `scripts/bootstrap-cache-install.sh` can also
-be executed through a raw `curl | bash` flow.
 
 Mode selection:
 
