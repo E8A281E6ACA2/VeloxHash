@@ -21,14 +21,15 @@ WALLET="${VELOXHASH_WALLET_ADDRESS:-}"
 MODE="${VELOXHASH_INSTALL_MODE:-auto}"
 SKIP_APT=0
 SKIP_BUILD=0
+SKIP_SOURCE_UPDATE=0
 START_SERVICE=1
 
 usage() {
   cat <<'EOF'
 Usage: bash bootstrap-cache-install.sh [public-wallet-address] [options]
 
-Downloads/updates VeloxHash under ~/.cache/veloxhash/source and builds it for
-the current host architecture.
+Downloads/updates VeloxHash source under ~/.cache/veloxhash/source and builds
+it for the current host architecture unless --skip-build is used.
 
 Modes:
   auto    root -> system service, non-root -> user service/background process
@@ -42,6 +43,8 @@ Options:
   --ref REF          Git branch/tag/commit, default: main
   --cache-dir DIR    Cache root, default: ~/.cache/veloxhash
   --skip-apt         Do not install apt build dependencies
+  --skip-source-update
+                     Use the existing cached/extracted source tree as-is
   --skip-build       Install existing build output from the cached source tree
   --no-start         Install files without starting VeloxHash
   -h, --help         Show this help
@@ -126,11 +129,11 @@ install_deps_if_allowed() {
 
   if [[ "${EUID}" -eq 0 ]] || has_sudo; then
     run_as_root apt-get update
-    run_as_root apt-get install -y build-essential ca-certificates cmake curl git libuv1-dev libssl-dev libhwloc-dev
+    run_as_root apt-get install -y build-essential ca-certificates cmake curl git python3 libuv1-dev libssl-dev libhwloc-dev
     return
   fi
 
-  for cmd in git cmake; do
+  for cmd in git cmake python3; do
     command -v "${cmd}" >/dev/null 2>&1 || die "${cmd} is required. Install dependencies or rerun with sudo/root."
   done
 }
@@ -664,6 +667,9 @@ while [[ $# -gt 0 ]]; do
     --skip-apt)
       SKIP_APT=1
       ;;
+    --skip-source-update)
+      SKIP_SOURCE_UPDATE=1
+      ;;
     --skip-build)
       SKIP_BUILD=1
       ;;
@@ -688,7 +694,9 @@ esac
 
 validate_public_wallet "${WALLET}"
 install_deps_if_allowed
-update_source
+if [[ "${SKIP_SOURCE_UPDATE}" -eq 0 ]]; then
+  update_source
+fi
 build_source
 
 if [[ "${MODE}" == "auto" ]]; then

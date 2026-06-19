@@ -46,30 +46,37 @@ sudo apt-get install -y build-essential cmake libuv1-dev libssl-dev libhwloc-dev
 
 ## systemd
 
-Cache-based Bash install. The source tree is kept under
-`~/.cache/veloxhash/source`; installed service files still use normal system
-paths such as `/etc/veloxhash`, `/usr/local/bin`, and `/var/log/veloxhash`.
+Release-based Bash install downloads a prebuilt Linux package when one is
+available. The extracted package is kept under `~/.cache/veloxhash/source`;
+installed service files still use normal system paths such as
+`/etc/veloxhash`, `/usr/local/bin`, and `/var/log/veloxhash`.
 
 Run as `root` to install the system service. Run as a normal user to install
 user mode under `~/.cache/veloxhash/runtime`; user mode does not write to
 `/etc` or `/usr/local/bin`.
 
-One-line cache install from GitHub:
+One-line prebuilt release install from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- <public-wallet-address>
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | sudo bash -s -- --mode system <public-wallet-address>
 ```
 
-Force a system service install:
+Normal-user mode:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | bash -s -- --mode user <public-wallet-address>
+```
+
+Source-build fallback:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | sudo bash -s -- --mode system <public-wallet-address>
 ```
 
-Download/update only, without installing:
+Release packages are produced with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- --download-only
+./scripts/package-release.sh
 ```
 
 Manual cache install:

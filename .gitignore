@@ -10,6 +10,7 @@ scripts/deps
 /.DS_Store
 /VeloxHash.zip
 /logs/
+/dist/
 /.claude/
 __pycache__/
 *.pyc

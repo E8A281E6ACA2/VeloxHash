@@ -4,24 +4,24 @@
 
 这是当前唯一推荐的部署方式：开机启动、网页/API 常驻、CPU 默认 50%、用户活跃/工作时间/CPU 忙时自动停止计算。
 
-支持 Ubuntu/Debian `amd64` 和 `arm64`。脚本会在当前机器上本地编译，所以 ARM 机器不需要预构建镜像。
+支持 Ubuntu/Debian `amd64` 和 `arm64`。优先下载当前架构的预编译 Release 包；没有对应包时会回退到本地编译。
 
-缓存目录安装并启动。源码会放在 `~/.cache/veloxhash/source`：
+推荐使用预编译 Release 包安装。包会解压到 `~/.cache/veloxhash/source`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- <公开钱包地址>
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | sudo bash -s -- --mode system <公开钱包地址>
 ```
 
-如果要安装系统级开机启动服务：
+普通用户模式：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | bash -s -- --mode user <公开钱包地址>
+```
+
+如果 Release 里没有当前架构的预编译包，脚本会回退到源码编译。也可以直接使用源码编译入口：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | sudo bash -s -- --mode system <公开钱包地址>
-```
-
-只下载到 `~/.cache`，先不安装：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | bash -s -- --download-only
 ```
 
 手动缓存安装：
