@@ -316,6 +316,15 @@ gather_mining() {
     POLICY_USER_ACTIVE="${POLICY_USER_ACTIVE:-unknown}"
   fi
 
+  if [[ "${POLICY_SWITCH}" == "disabled" ]]; then
+    case "${mining:-}" in
+      1|true|TRUE|yes|YES|on|ON)
+        POLICY_DESIRED="1"
+        POLICY_REASON="immediate mode"
+        ;;
+    esac
+  fi
+
   case "${mining:-}" in
     1|true|TRUE|yes|YES|on|ON) MINING_SWITCH="enabled" ;;
     0|false|FALSE|no|NO|off|OFF) MINING_SWITCH="disabled" ;;
@@ -525,7 +534,6 @@ gather_backup() {
   LATEST_BACKUP="unknown"
   if [[ ! -d "${BACKUP_DIR}" ]]; then
     LATEST_BACKUP="not found"
-    add_event WARN backup "backup directory not found or not readable"
     return
   fi
 
@@ -538,7 +546,6 @@ gather_backup() {
   LATEST_BACKUP="$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'veloxhash-backup-*.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {print $2}')"
   if [[ -z "${LATEST_BACKUP}" ]]; then
     LATEST_BACKUP="none"
-    add_event WARN backup "no backup archives found"
   fi
 }
 
