@@ -367,6 +367,15 @@ for item in data:
 print(f"{len(data)} total, {len(enabled)} enabled; " + "; ".join(parts))
 ' 2>/dev/null || true)"
     BACKEND_SUMMARY="${parsed:-parse failed}"
+    if printf '%s\n' "${BACKEND_SUMMARY}" | grep -q 'cpu:disabled'; then
+      if [[ "${POLICY_SWITCH}" == "enabled" && "${POLICY_DESIRED}" == "0" ]]; then
+        add_event WARN mining "CPU mining is paused by policy: ${POLICY_REASON}"
+      elif [[ "${MINING_SWITCH}" == "disabled" ]]; then
+        add_event WARN mining "CPU mining switch is disabled"
+      else
+        add_event WARN mining "CPU backend is disabled"
+      fi
+    fi
   fi
 
   summary="$(http_get "${BASE_URL}/1/summary" -H "Authorization: Bearer ${token}")"

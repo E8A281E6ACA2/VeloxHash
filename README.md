@@ -71,10 +71,29 @@ both the wallet and pool address in one command:
 curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333
 ```
 
+By default, the service starts at boot but the automatic policy may pause CPU
+mining during the 08:00-22:00 work window, when the CPU is already busy, or
+when a non-service user was recently active. To install and start mining
+immediately at the 75% CPU thread target, disable the automatic policy during
+install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --policy off --cpu-percent 75
+```
+
+Switch an installed service between modes:
+
+```bash
+sudo veloxhash-mining mode now   # start mining immediately
+sudo veloxhash-mining mode auto  # return to idle/work automatic policy
+sudo veloxhash-mining cpu set 75
+sudo veloxhash-status --short
+```
+
 With a custom pool and rig ID:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --coin monero --rig-id rig01
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --coin monero --rig-id rig01 --cpu-percent 75
 ```
 
 Cleanup system service install:

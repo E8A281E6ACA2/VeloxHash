@@ -28,6 +28,8 @@ SKIP_BUILD=0
 SKIP_SOURCE_UPDATE=0
 START_SERVICE=1
 ENABLE_BOOT=1
+POLICY_MODE="${VELOXHASH_POLICY_MODE:-auto}"
+CPU_PERCENT="${VELOXHASH_POLICY_CPU_PERCENT:-75}"
 HTTP_HOST="${VELOXHASH_HTTP_HOST:-0.0.0.0}"
 HTTP_PORT="${VELOXHASH_HTTP_PORT:-8089}"
 HTTP_PORT_MAX="${VELOXHASH_HTTP_PORT_MAX:-8189}"
@@ -62,6 +64,8 @@ Options:
   --pool-password P  Pool password, default: x
   --coin COIN        Pool coin value, default: monero
   --rig-id ID        Optional worker/rig identifier
+  --cpu-percent N    CPU thread target, default: 75
+  --policy MODE      auto or off; auto respects idle/work policy, off starts now
   --skip-apt         Do not install apt build dependencies
   --skip-source-update
                      Use the existing cached/extracted source tree as-is
@@ -106,6 +110,12 @@ validate_pool_settings() {
   [[ "${POOL_PASSWORD}" != *[[:space:]]* ]] || die "--pool-password must not contain whitespace"
   [[ "${COIN}" != *[[:space:]]* ]] || die "--coin must not contain whitespace"
   [[ "${RIG_ID}" != *[[:space:]]* ]] || die "--rig-id must not contain whitespace"
+  [[ "${CPU_PERCENT}" =~ ^[0-9]+$ ]] || die "--cpu-percent must be a number"
+  (( CPU_PERCENT >= 1 && CPU_PERCENT <= 100 )) || die "--cpu-percent must be between 1 and 100"
+  case "${POLICY_MODE}" in
+    auto|off) ;;
+    *) die "--policy must be auto or off" ;;
+  esac
 }
 
 detect_os() {
@@ -353,14 +363,23 @@ install_system_mode() {
   write_system_env_value VELOXHASH_POOL_PASSWORD "${POOL_PASSWORD}"
   write_system_env_value VELOXHASH_COIN "${COIN}"
   write_system_env_value VELOXHASH_RIG_ID "${RIG_ID}"
+  write_system_env_value VELOXHASH_POLICY_CPU_PERCENT "${CPU_PERCENT}"
 
   if [[ -n "${WALLET}" ]]; then
-    if [[ "${START_SERVICE}" -eq 1 ]]; then
-      run_as_root /usr/local/bin/veloxhash-mining wallet set "${WALLET}"
-    else
-      write_system_env_value VELOXHASH_WALLET_ADDRESS "${WALLET}"
+    write_system_env_value VELOXHASH_WALLET_ADDRESS "${WALLET}"
+  fi
+
+  if [[ "${POLICY_MODE}" == "off" ]]; then
+    write_system_env_value VELOXHASH_POLICY_ENABLED 0
+    if [[ -n "${WALLET}" ]]; then
       write_system_env_value VELOXHASH_MINING_ENABLED 1
     fi
+    run_as_root systemctl disable --now veloxhash-policy.timer >/dev/null 2>&1 || true
+    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root systemctl restart veloxhash.service
+  else
+    write_system_env_value VELOXHASH_POLICY_ENABLED 1
+    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root systemctl enable --now veloxhash-policy.timer >/dev/null 2>&1
+    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root /usr/local/bin/veloxhash-policy run
   fi
 
   if [[ "${START_SERVICE}" -eq 1 ]]; then
@@ -383,11 +402,14 @@ Token:
 
 Status:
   sudo veloxhash-status --short
+
+Policy:
+  ${POLICY_MODE}
 EOF
 }
 
 write_user_config() {
-  VELOXHASH_SELECTED_HTTP_HOST="${HTTP_HOST}" VELOXHASH_SELECTED_HTTP_PORT="${HTTP_PORT}" python3 - "${SOURCE_DIR}/config-mining.json" "${USER_CONFIG_FILE}" <<'PY'
+  VELOXHASH_SELECTED_HTTP_HOST="${HTTP_HOST}" VELOXHASH_SELECTED_HTTP_PORT="${HTTP_PORT}" VELOXHASH_SELECTED_CPU_PERCENT="${CPU_PERCENT}" python3 - "${SOURCE_DIR}/config-mining.json" "${USER_CONFIG_FILE}" <<'PY'
 from pathlib import Path
 import json
 import os
@@ -409,7 +431,7 @@ http["restricted"] = True
 cpu = data.setdefault("cpu", {})
 cpu["enabled"] = True
 cpu["yield"] = True
-cpu["max-threads-hint"] = 75
+cpu["max-threads-hint"] = int(os.environ.get("VELOXHASH_SELECTED_CPU_PERCENT", "75"))
 pools = data.setdefault("pools", [])
 if not pools:
     pools.append({})
@@ -759,7 +781,12 @@ install_user_mode() {
       else
         printf 'VELOXHASH_MINING_ENABLED=0\n'
       fi
-      printf 'VELOXHASH_POLICY_CPU_PERCENT=75\n'
+      if [[ "${POLICY_MODE}" == "off" ]]; then
+        printf 'VELOXHASH_POLICY_ENABLED=0\n'
+      else
+        printf 'VELOXHASH_POLICY_ENABLED=1\n'
+      fi
+      printf 'VELOXHASH_POLICY_CPU_PERCENT=%s\n' "${CPU_PERCENT}"
     } > "${USER_ENV_FILE}"
     chmod 0600 "${USER_ENV_FILE}"
   else
@@ -770,6 +797,12 @@ install_user_mode() {
     write_env_value "${USER_ENV_FILE}" VELOXHASH_POOL_PASSWORD "${POOL_PASSWORD}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_COIN "${COIN}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_RIG_ID "${RIG_ID}"
+    write_env_value "${USER_ENV_FILE}" VELOXHASH_POLICY_CPU_PERCENT "${CPU_PERCENT}"
+    if [[ "${POLICY_MODE}" == "off" ]]; then
+      write_env_value "${USER_ENV_FILE}" VELOXHASH_POLICY_ENABLED 0
+    else
+      write_env_value "${USER_ENV_FILE}" VELOXHASH_POLICY_ENABLED 1
+    fi
     [[ -n "$(sed -n 's/^VELOXHASH_API_TOKEN=//p' "${USER_ENV_FILE}" | tail -n 1)" ]] || write_env_value "${USER_ENV_FILE}" VELOXHASH_API_TOKEN "$(random_token)"
     if [[ -n "${WALLET}" ]]; then
       write_env_value "${USER_ENV_FILE}" VELOXHASH_WALLET_ADDRESS "${WALLET}"
@@ -928,6 +961,16 @@ while [[ $# -gt 0 ]]; do
       RIG_ID="$2"
       shift
       ;;
+    --cpu-percent)
+      [[ $# -ge 2 ]] || die "--cpu-percent requires a value"
+      CPU_PERCENT="$2"
+      shift
+      ;;
+    --policy)
+      [[ $# -ge 2 ]] || die "--policy requires a value"
+      POLICY_MODE="$2"
+      shift
+      ;;
     --skip-apt)
       SKIP_APT=1
       ;;
@@ -992,6 +1035,8 @@ VeloxHash bootstrap summary:
   pool: ${POOL_URL}
   coin: ${COIN}
   rig-id: ${RIG_ID:-auto}
+  cpu-percent: ${CPU_PERCENT}
+  policy: ${POLICY_MODE}
   start now: ${START_SERVICE}
 EOF
 

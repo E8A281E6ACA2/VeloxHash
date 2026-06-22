@@ -36,6 +36,8 @@ Options:
   --pool-password P     Pool password, default: x
   --coin COIN           Pool coin value, default: monero
   --rig-id ID           Optional worker/rig identifier
+  --cpu-percent N       CPU thread target, default: 75
+  --policy MODE         auto or off; auto respects idle/work policy, off starts now
   --tarball URL         Download this tarball URL instead of querying GitHub
   --no-build-fallback   Fail if a matching release package is unavailable
   --no-start            Install files without starting VeloxHash
@@ -161,7 +163,7 @@ while [[ $# -gt 0 ]]; do
       usage
       exit 0
       ;;
-    --wallet|--mode|--http-host|--http-port|--http-port-max|--pool-url|--pool-password|--coin|--rig-id)
+    --wallet|--mode|--http-host|--http-port|--http-port-max|--pool-url|--pool-password|--coin|--rig-id|--cpu-percent|--policy)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       INSTALL_ARGS+=("$1" "$2")
       shift

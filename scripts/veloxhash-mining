@@ -17,6 +17,13 @@ Commands:
   pool      Show configured pool
   pool set <url> [password] [coin]
            Set pool URL, optional password, optional coin, and restart VeloxHash
+  cpu       Show configured CPU thread target
+  cpu set <percent>
+           Set CPU thread target, 1-100, and restart VeloxHash
+  mode auto
+           Enable automatic idle/work policy
+  mode now
+           Disable automatic policy and start mining immediately
   wallet    Show configured public wallet address status
   wallet set <address>
            Set the public pool payout address and restart VeloxHash
@@ -126,6 +133,14 @@ validate_pool_url() {
   fi
 }
 
+validate_cpu_percent() {
+  local value="$1"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]] || (( value < 1 || value > 100 )); then
+    echo "CPU percent must be a number between 1 and 100." >&2
+    return 1
+  fi
+}
+
 restart_service() {
   systemctl restart "${SERVICE_NAME}"
 }
@@ -211,6 +226,72 @@ case "${command}" in
         ;;
       *)
         echo "Unknown pool command: ${subcommand}" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  cpu)
+    require_env_file
+    case "${subcommand}" in
+      set)
+        require_root
+        percent="${3:-}"
+        validate_cpu_percent "${percent}"
+        set_env_value VELOXHASH_POLICY_CPU_PERCENT "${percent}"
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        restart_service
+        echo "VeloxHash CPU thread target configured."
+        echo "cpu-percent: ${percent}"
+        ;;
+      "")
+        if ! env_file_readable; then
+          echo "Cannot read ${ENV_FILE}. Run as root." >&2
+          exit 1
+        fi
+        echo "cpu-percent: $(get_env_value VELOXHASH_POLICY_CPU_PERCENT)"
+        ;;
+      *)
+        echo "Unknown cpu command: ${subcommand}" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  mode)
+    require_root
+    require_env_file
+    case "${subcommand}" in
+      auto)
+        set_env_value VELOXHASH_POLICY_ENABLED 1
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        systemctl enable --now veloxhash-policy.timer >/dev/null 2>&1 || true
+        if command -v veloxhash-policy >/dev/null 2>&1; then
+          veloxhash-policy run || restart_service
+        else
+          restart_service
+        fi
+        echo "VeloxHash automatic idle/work policy enabled."
+        ;;
+      now)
+        wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+        if ! wallet_is_configured "${wallet}"; then
+          echo "Wallet address is not configured; mining cannot start." >&2
+          echo "Set it first: sudo veloxhash-mining wallet set <public-wallet-address>" >&2
+          exit 1
+        fi
+        set_env_value VELOXHASH_POLICY_ENABLED 0
+        set_env_value VELOXHASH_MINING_ENABLED 1
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        systemctl disable --now veloxhash-policy.timer >/dev/null 2>&1 || true
+        restart_service
+        echo "VeloxHash immediate mining mode enabled."
+        ;;
+      *)
+        echo "Unknown mode command: ${subcommand}" >&2
         usage >&2
         exit 2
         ;;

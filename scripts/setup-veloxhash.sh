@@ -27,6 +27,8 @@ Options are passed through to install-release.sh, including:
   --pool-password P
   --coin COIN
   --rig-id ID
+  --cpu-percent N
+  --policy MODE        auto or off; auto respects idle/work policy, off starts now
   --http-port PORT
   --ref REF
   -h, --help
@@ -74,7 +76,7 @@ while [[ $# -gt 0 ]]; do
       ARGS+=("$1" "$2")
       shift
       ;;
-    --pool-url|--pool-password|--coin|--rig-id|--http-host|--http-port|--http-port-max|--cache-dir)
+    --pool-url|--pool-password|--coin|--rig-id|--cpu-percent|--policy|--http-host|--http-port|--http-port-max|--cache-dir)
       [[ $# -ge 2 ]] || die "$1 requires a value"
       ARGS+=("$1" "$2")
       shift
