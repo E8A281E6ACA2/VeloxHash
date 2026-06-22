@@ -50,17 +50,13 @@ validate_wallet() {
   [[ ! "${wallet}" =~ [[:space:]] ]] || die "wallet address must not contain whitespace"
 }
 
-has_sudo() {
-  command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1
-}
-
 run_installer() {
   if [[ "${EUID}" -eq 0 ]]; then
     curl -fsSL "${INSTALL_URL}" | LC_ALL=en_US.UTF-8 bash -s -- "${ARGS[@]}" "${WALLET}"
-  elif has_sudo; then
+  elif command -v sudo >/dev/null 2>&1; then
     curl -fsSL "${INSTALL_URL}" | LC_ALL=en_US.UTF-8 sudo bash -s -- "${ARGS[@]}" "${WALLET}"
   else
-    die "system service install requires root or passwordless sudo"
+    die "system service install requires root or sudo"
   fi
 }
 
