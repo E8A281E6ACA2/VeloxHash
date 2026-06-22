@@ -22,7 +22,7 @@ Default policy:
   - stop mining when a non-service user was active in the last 15 minutes
   - allow mining only outside 08:00-22:00
   - stop mining when load1 is above CPU cores * 0.60
-  - configure CPU max-threads-hint to 50
+  - configure CPU max-threads-hint to 75
 EOF
 }
 
@@ -215,7 +215,7 @@ user_active() {
 ensure_cpu_hint() {
   local hint
   hint="${VELOXHASH_POLICY_CPU_PERCENT:-$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)}"
-  hint="${hint:-50}"
+  hint="${hint:-75}"
 
   python3 - "${CONFIG_FILE}" "${hint}" <<'PY'
 import json
@@ -317,7 +317,7 @@ status() {
     printf 'mining: unknown\n'
     printf 'wallet: unknown\n'
   fi
-  printf 'cpu-percent: %s\n' "${cpu_percent:-50}"
+  printf 'cpu-percent: %s\n' "${cpu_percent:-75}"
   printf 'work-window: %s-%s\n' "${work_start:-08}" "${work_end:-22}"
   printf 'load-threshold: %s\n' "${load_threshold:-0.60}"
   printf 'active-minutes: %s\n' "${active_minutes:-15}"
@@ -349,7 +349,7 @@ enable_policy() {
   require_root
   require_env_file
   set_env_value VELOXHASH_POLICY_ENABLED 1
-  [[ -n "$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)" ]] || set_env_value VELOXHASH_POLICY_CPU_PERCENT 50
+  [[ -n "$(get_env_value VELOXHASH_POLICY_CPU_PERCENT)" ]] || set_env_value VELOXHASH_POLICY_CPU_PERCENT 75
   [[ -n "$(get_env_value VELOXHASH_POLICY_WORK_START)" ]] || set_env_value VELOXHASH_POLICY_WORK_START 08
   [[ -n "$(get_env_value VELOXHASH_POLICY_WORK_END)" ]] || set_env_value VELOXHASH_POLICY_WORK_END 22
   [[ -n "$(get_env_value VELOXHASH_POLICY_LOAD_THRESHOLD)" ]] || set_env_value VELOXHASH_POLICY_LOAD_THRESHOLD 0.60

@@ -17,7 +17,7 @@ The service starts at boot. The dashboard and API stay online. CPU mining is con
 
 Default policy:
 
-- CPU target: `50%` via `cpu.max-threads-hint`
+- CPU target: `75%` via `cpu.max-threads-hint`
 - User activity: stop mining when a non-service user was active in the last `15` minutes
 - Work window: `08:00-22:00`, no mining
 - Off-hours: mining may run when CPU is idle
@@ -63,7 +63,7 @@ Policy values live in `/etc/veloxhash/veloxhash.env`:
 
 ```text
 VELOXHASH_POLICY_ENABLED=1
-VELOXHASH_POLICY_CPU_PERCENT=50
+VELOXHASH_POLICY_CPU_PERCENT=75
 VELOXHASH_POLICY_WORK_START=08
 VELOXHASH_POLICY_WORK_END=22
 VELOXHASH_POLICY_LOAD_THRESHOLD=0.60

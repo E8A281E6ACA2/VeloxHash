@@ -337,7 +337,7 @@ http["restricted"] = True
 cpu = data.setdefault("cpu", {})
 cpu["enabled"] = True
 cpu["yield"] = True
-cpu["max-threads-hint"] = 50
+cpu["max-threads-hint"] = 75
 pools = data.setdefault("pools", [])
 if pools:
     pool = pools[0]
@@ -373,7 +373,7 @@ if [[ ! -f /etc/veloxhash/veloxhash.env ]]; then
     printf 'VELOXHASH_RIG_ID=\n'
     printf 'VELOXHASH_MINING_ENABLED=0\n'
     printf 'VELOXHASH_POLICY_ENABLED=1\n'
-    printf 'VELOXHASH_POLICY_CPU_PERCENT=50\n'
+    printf 'VELOXHASH_POLICY_CPU_PERCENT=75\n'
     printf 'VELOXHASH_POLICY_WORK_START=08\n'
     printf 'VELOXHASH_POLICY_WORK_END=22\n'
     printf 'VELOXHASH_POLICY_LOAD_THRESHOLD=0.60\n'
@@ -413,7 +413,9 @@ else
     printf 'VELOXHASH_POLICY_ENABLED=1\n' >> /etc/veloxhash/veloxhash.env
   fi
   if ! grep -q '^VELOXHASH_POLICY_CPU_PERCENT=' /etc/veloxhash/veloxhash.env; then
-    printf 'VELOXHASH_POLICY_CPU_PERCENT=50\n' >> /etc/veloxhash/veloxhash.env
+    printf 'VELOXHASH_POLICY_CPU_PERCENT=75\n' >> /etc/veloxhash/veloxhash.env
+  elif grep -q '^VELOXHASH_POLICY_CPU_PERCENT=50$' /etc/veloxhash/veloxhash.env; then
+    set_env_value_file /etc/veloxhash/veloxhash.env VELOXHASH_POLICY_CPU_PERCENT 75
   fi
   if ! grep -q '^VELOXHASH_POLICY_WORK_START=' /etc/veloxhash/veloxhash.env; then
     printf 'VELOXHASH_POLICY_WORK_START=08\n' >> /etc/veloxhash/veloxhash.env
@@ -515,7 +517,7 @@ info = {
     "mining_default": "disabled",
     "policy": {
         "enabled": True,
-        "cpu_percent": 50,
+        "cpu_percent": 75,
         "work_start": "08",
         "work_end": "22",
         "load_threshold": 0.60,
@@ -579,7 +581,7 @@ Set the public payout address with:
 
   sudo veloxhash-mining wallet set <public-wallet-address>
 
-Default policy: max 50% CPU, no mining when a non-service user was active in the last 15 minutes, no mining during 08:00-22:00, stop when load1 is above CPU cores * 0.60. The policy checks every minute.
+Default policy: max 75% CPU, no mining when a non-service user was active in the last 15 minutes, no mining during 08:00-22:00, stop when load1 is above CPU cores * 0.60. The policy checks every minute.
 
 Cluster monitoring is installed but disabled by default. It does not control mining. It only records node health heartbeats when explicitly enabled.
 
@@ -644,7 +646,7 @@ Token file: /etc/veloxhash/veloxhash.env
 Install info: /etc/veloxhash/install-info.json
 Mining default: disabled
 Wallet default: not configured; mining will not start until a public wallet address is set
-Policy default: enabled, 50% CPU, stop on recent user activity, off during 08:00-22:00, checks every minute
+Policy default: enabled, 75% CPU, stop on recent user activity, off during 08:00-22:00, checks every minute
 
 Commands:
   sudo systemctl status veloxhash

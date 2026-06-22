@@ -11,7 +11,7 @@ The installed service:
 - records deployment metadata in `/etc/veloxhash/install-info.json`
 - enables unrestricted HTTP API mode only with the token supplied by systemd
 - starts the dashboard/API at boot and lets `veloxhash-policy.timer` control CPU mining
-- defaults to 50% CPU, no mining when a non-service user was active in the last 15 minutes, no mining during `08:00-22:00`, and no mining when load1 is above CPU cores * `0.60`
+- defaults to 75% CPU threads, no mining when a non-service user was active in the last 15 minutes, no mining during `08:00-22:00`, and no mining when load1 is above CPU cores * `0.60`
 - checks the automatic mining policy every minute
 - installs optional cluster monitoring, disabled until `veloxhash-cluster init-primary` or `veloxhash-cluster join` is run
 - limits restart storms with `StartLimitBurst=5` in 5 minutes

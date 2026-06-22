@@ -281,7 +281,7 @@ gather_mining() {
     "") POLICY_SWITCH="unknown (run as root to read ${ENV_FILE})" ;;
     *) POLICY_SWITCH="unusual value: ${policy_enabled}" ;;
   esac
-  POLICY_CPU_PERCENT="${policy_cpu:-50}"
+  POLICY_CPU_PERCENT="${policy_cpu:-75}"
   POLICY_WORK_WINDOW="${work_start:-08}-${work_end:-22}"
   POLICY_LOAD_THRESHOLD="${load_threshold:-0.60}"
   POLICY_ACTIVE_MINUTES="${active_minutes:-15}"

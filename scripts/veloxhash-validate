@@ -170,7 +170,7 @@ check_config() {
     warn config "no pool entries found"
   fi
 
-  [[ "${cpu_hint}" == "50" ]] && pass config "CPU max-threads-hint is 50" || warn config "CPU max-threads-hint is ${cpu_hint:-empty}; expected 50"
+  [[ "${cpu_hint}" == "75" ]] && pass config "CPU max-threads-hint is 75" || warn config "CPU max-threads-hint is ${cpu_hint:-empty}; expected 75"
   [[ "${cpu_yield}" == "true" ]] && pass config "CPU yield enabled" || warn config "CPU yield is ${cpu_yield:-empty}; expected true"
 }
 

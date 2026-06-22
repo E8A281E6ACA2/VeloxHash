@@ -228,7 +228,7 @@ The installer copies the current `build-veloxhash/veloxhash` binary to `/usr/loc
 
 During install or upgrade, VeloxHash detects old installed runners that cannot pass pool settings to the miner, backs them up under `/var/backups/veloxhash`, and replaces them with the current runner.
 
-The service starts at boot. The dashboard/API stays online on the selected HTTP port. CPU mining is controlled by `veloxhash-policy.timer`, which checks every minute. The default policy uses 50% CPU, stops immediately on recent non-service user activity, does not mine during `08:00-22:00`, and stops mining when load1 is above CPU cores * `0.60`.
+The service starts at boot. The dashboard/API stays online on the selected HTTP port. CPU mining is controlled by `veloxhash-policy.timer`, which checks every minute. The default policy targets 75% CPU threads, stops immediately on recent non-service user activity, does not mine during `08:00-22:00`, and stops mining when load1 is above CPU cores * `0.60`.
 
 Cluster workers are uniquely identified by a persistent `VELOXHASH_CLUSTER_NODE_ID`, not by IP address. IPs are still reported in cluster heartbeats for visibility, but they are not stable enough to be the primary identity.
 

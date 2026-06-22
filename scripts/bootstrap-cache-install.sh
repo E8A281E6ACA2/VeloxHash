@@ -409,7 +409,7 @@ http["restricted"] = True
 cpu = data.setdefault("cpu", {})
 cpu["enabled"] = True
 cpu["yield"] = True
-cpu["max-threads-hint"] = 50
+cpu["max-threads-hint"] = 75
 pools = data.setdefault("pools", [])
 if not pools:
     pools.append({})
@@ -482,7 +482,7 @@ case "${VELOXHASH_MINING_ENABLED:-0}" in
         --pass="${VELOXHASH_POOL_PASSWORD:-x}"
         --rig-id="${rig_id}"
         --coin="${VELOXHASH_COIN:-monero}"
-        --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-50}"
+        --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-75}"
         --donate-level=0
       )
     else
@@ -759,7 +759,7 @@ install_user_mode() {
       else
         printf 'VELOXHASH_MINING_ENABLED=0\n'
       fi
-      printf 'VELOXHASH_POLICY_CPU_PERCENT=50\n'
+      printf 'VELOXHASH_POLICY_CPU_PERCENT=75\n'
     } > "${USER_ENV_FILE}"
     chmod 0600 "${USER_ENV_FILE}"
   else

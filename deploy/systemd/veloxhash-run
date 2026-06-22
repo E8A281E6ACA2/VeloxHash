@@ -47,7 +47,7 @@ case "${VELOXHASH_MINING_ENABLED:-0}" in
         --pass="${VELOXHASH_POOL_PASSWORD:-x}"
         --rig-id="${rig_id}"
         --coin="${VELOXHASH_COIN:-monero}"
-        --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-50}"
+        --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-75}"
         --donate-level=0
       )
     else

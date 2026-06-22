@@ -9,6 +9,7 @@ POOL_URL="${VELOXHASH_POOL_URL:-auto.c3pool.org:33333}"
 POOL_PASSWORD="${VELOXHASH_POOL_PASSWORD:-x}"
 COIN="${VELOXHASH_COIN:-monero}"
 RIG_ID="${VELOXHASH_RIG_ID:-}"
+CPU_PERCENT="${VELOXHASH_CPU_PERCENT:-75}"
 TLS=1
 WALLET=""
 EXTRA_ARGS=()
@@ -25,6 +26,7 @@ Options:
   --pool-password P    Pool password, default: x
   --coin COIN          Pool coin value, default: monero
   --rig-id ID          Worker/rig identifier, default: hostname-shortid
+  --cpu-percent N      CPU thread target, default: 75
   --cache-dir DIR      Direct-run cache directory
   --ref REF            Release tag or latest, default: latest
   --no-tls             Do not pass --tls
@@ -63,6 +65,8 @@ validate_pool_settings() {
   [[ "${POOL_PASSWORD}" != *[[:space:]]* ]] || die "--pool-password must not contain whitespace"
   [[ "${COIN}" != *[[:space:]]* ]] || die "--coin must not contain whitespace"
   [[ "${RIG_ID}" != *[[:space:]]* ]] || die "--rig-id must not contain whitespace"
+  [[ "${CPU_PERCENT}" =~ ^[0-9]+$ ]] || die "--cpu-percent must be a number"
+  (( CPU_PERCENT >= 1 && CPU_PERCENT <= 100 )) || die "--cpu-percent must be between 1 and 100"
 }
 
 default_rig_id() {
@@ -111,6 +115,11 @@ while [[ $# -gt 0 ]]; do
     --rig-id)
       [[ $# -ge 2 ]] || die "--rig-id requires a value"
       RIG_ID="$2"
+      shift
+      ;;
+    --cpu-percent)
+      [[ $# -ge 2 ]] || die "--cpu-percent requires a value"
+      CPU_PERCENT="$2"
       shift
       ;;
     --cache-dir)
@@ -181,6 +190,7 @@ ARGS=(
   --rig-id "${RIG_ID}"
   --coin "${COIN}"
   --keepalive
+  --cpu-max-threads-hint="${CPU_PERCENT}"
   --donate-level=0
 )
 
@@ -196,6 +206,7 @@ VeloxHash direct run
   pool: ${POOL_URL}
   coin: ${COIN}
   rig-id: ${RIG_ID}
+  cpu-percent: ${CPU_PERCENT}
   tls: ${TLS}
 
 Stop with Ctrl+C.
