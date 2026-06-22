@@ -25,6 +25,8 @@ Defaults:
 Options are passed through to install-release.sh, including:
   --pool-url URL
   --pool-password P
+  --pool-tls
+  --no-pool-tls
   --coin COIN
   --rig-id ID
   --cpu-percent N
@@ -81,7 +83,7 @@ while [[ $# -gt 0 ]]; do
       ARGS+=("$1" "$2")
       shift
       ;;
-    --no-start|--no-build-fallback)
+    --no-start|--no-build-fallback|--pool-tls|--no-pool-tls)
       ARGS+=("$1")
       ;;
     --mode)

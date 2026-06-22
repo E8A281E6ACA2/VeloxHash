@@ -37,6 +37,8 @@ Options:
                     Highest fallback port, default: 8189
   --pool-url URL     Pool host:port, default: auto.c3pool.org:33333
   --pool-password P  Pool password, default: x
+  --pool-tls         Enable pool TLS, default
+  --no-pool-tls      Disable pool TLS
   --coin COIN        Pool coin value, default: monero
   --rig-id ID        Optional worker/rig identifier
   --cpu-percent N    CPU thread target, default: 75
@@ -176,7 +178,7 @@ while [[ $# -gt 0 ]]; do
       SOURCE_DIR="${CACHE_ROOT}/source"
       shift
       ;;
-    --skip-apt|--skip-build|--no-start|--no-enable-boot)
+    --skip-apt|--skip-build|--no-start|--no-enable-boot|--pool-tls|--no-pool-tls)
       BOOTSTRAP_ARGS+=("$1")
       ;;
     --download-only)

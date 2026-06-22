@@ -20,6 +20,7 @@ USER_SERVICE_FILE="${USER_SERVICE_DIR}/veloxhash.service"
 WALLET="${VELOXHASH_WALLET_ADDRESS:-}"
 POOL_URL="${VELOXHASH_POOL_URL:-auto.c3pool.org:33333}"
 POOL_PASSWORD="${VELOXHASH_POOL_PASSWORD:-x}"
+POOL_TLS="${VELOXHASH_POOL_TLS:-1}"
 COIN="${VELOXHASH_COIN:-monero}"
 RIG_ID="${VELOXHASH_RIG_ID:-}"
 MODE="${VELOXHASH_INSTALL_MODE:-auto}"
@@ -62,6 +63,8 @@ Options:
                     Highest fallback port, default: 8189
   --pool-url URL     Pool host:port, default: auto.c3pool.org:33333
   --pool-password P  Pool password, default: x
+  --pool-tls         Enable pool TLS, default
+  --no-pool-tls      Disable pool TLS
   --coin COIN        Pool coin value, default: monero
   --rig-id ID        Optional worker/rig identifier
   --cpu-percent N    CPU thread target, default: 75
@@ -108,6 +111,10 @@ validate_pool_settings() {
   [[ "${POOL_URL}" != *[[:space:]]* ]] || die "--pool-url must not contain whitespace"
   [[ "${POOL_URL}" == *:* ]] || die "--pool-url should include host:port"
   [[ "${POOL_PASSWORD}" != *[[:space:]]* ]] || die "--pool-password must not contain whitespace"
+  case "${POOL_TLS}" in
+    1|true|TRUE|yes|YES|on|ON|0|false|FALSE|no|NO|off|OFF) ;;
+    *) die "pool TLS value must be on/off" ;;
+  esac
   [[ "${COIN}" != *[[:space:]]* ]] || die "--coin must not contain whitespace"
   [[ "${RIG_ID}" != *[[:space:]]* ]] || die "--rig-id must not contain whitespace"
   [[ "${CPU_PERCENT}" =~ ^[0-9]+$ ]] || die "--cpu-percent must be a number"
@@ -361,6 +368,7 @@ install_system_mode() {
 
   write_system_env_value VELOXHASH_POOL_URL "${POOL_URL}"
   write_system_env_value VELOXHASH_POOL_PASSWORD "${POOL_PASSWORD}"
+  write_system_env_value VELOXHASH_POOL_TLS "${POOL_TLS}"
   write_system_env_value VELOXHASH_COIN "${COIN}"
   write_system_env_value VELOXHASH_RIG_ID "${RIG_ID}"
   write_system_env_value VELOXHASH_POLICY_CPU_PERCENT "${CPU_PERCENT}"
@@ -441,6 +449,7 @@ pool["user"] = "${VELOXHASH_WALLET_ADDRESS}"
 pool["pass"] = "${VELOXHASH_POOL_PASSWORD}"
 pool["rig-id"] = "${VELOXHASH_RIG_ID}"
 pool["coin"] = "${VELOXHASH_COIN}"
+pool["tls"] = os.environ.get("VELOXHASH_POOL_TLS", "1").lower() in ("1", "true", "yes", "on")
 pool["enabled"] = True
 dst.write_text(json.dumps(data, indent=4) + "\n")
 PY
@@ -469,6 +478,13 @@ ARGS=(
   --randomx-wrmsr=-1
   --pause-on-active=900
 )
+
+truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 is_wallet_configured() {
   local value="${1:-}"
@@ -507,6 +523,9 @@ case "${VELOXHASH_MINING_ENABLED:-0}" in
         --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-75}"
         --donate-level=0
       )
+      if truthy "${VELOXHASH_POOL_TLS:-1}"; then
+        ARGS+=(--tls)
+      fi
     else
       printf '%s\n' "VeloxHash wallet address is not configured; keeping CPU mining disabled." >&2
       ARGS+=(--no-cpu)
@@ -774,6 +793,7 @@ install_user_mode() {
       printf 'VELOXHASH_WALLET_ADDRESS=%s\n' "${WALLET}"
       printf 'VELOXHASH_POOL_URL=%s\n' "${POOL_URL}"
       printf 'VELOXHASH_POOL_PASSWORD=%s\n' "${POOL_PASSWORD}"
+      printf 'VELOXHASH_POOL_TLS=%s\n' "${POOL_TLS}"
       printf 'VELOXHASH_COIN=%s\n' "${COIN}"
       printf 'VELOXHASH_RIG_ID=%s\n' "${RIG_ID}"
       if [[ -n "${WALLET}" ]]; then
@@ -795,6 +815,7 @@ install_user_mode() {
     write_env_value "${USER_ENV_FILE}" VELOXHASH_HTTP_PORT "${HTTP_PORT}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_POOL_URL "${POOL_URL}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_POOL_PASSWORD "${POOL_PASSWORD}"
+    write_env_value "${USER_ENV_FILE}" VELOXHASH_POOL_TLS "${POOL_TLS}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_COIN "${COIN}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_RIG_ID "${RIG_ID}"
     write_env_value "${USER_ENV_FILE}" VELOXHASH_POLICY_CPU_PERCENT "${CPU_PERCENT}"
@@ -951,6 +972,12 @@ while [[ $# -gt 0 ]]; do
       POOL_PASSWORD="$2"
       shift
       ;;
+    --pool-tls)
+      POOL_TLS=1
+      ;;
+    --no-pool-tls)
+      POOL_TLS=0
+      ;;
     --coin)
       [[ $# -ge 2 ]] || die "--coin requires a value"
       COIN="$2"
@@ -1033,6 +1060,7 @@ VeloxHash bootstrap summary:
   source: ${SOURCE_DIR}
   http: ${HTTP_HOST}:${HTTP_PORT}
   pool: ${POOL_URL}
+  pool tls: ${POOL_TLS}
   coin: ${COIN}
   rig-id: ${RIG_ID:-auto}
   cpu-percent: ${CPU_PERCENT}

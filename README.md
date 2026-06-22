@@ -68,7 +68,7 @@ Install VeloxHash as a systemd service, enable boot startup, start it, and set
 both the wallet and pool address in one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --pool-tls
 ```
 
 By default, the service starts at boot but the automatic policy may pause CPU
@@ -78,7 +78,7 @@ immediately at the 75% CPU thread target, disable the automatic policy during
 install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --policy off --cpu-percent 75
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --pool-tls --policy off --cpu-percent 75
 ```
 
 Switch an installed service between modes:
@@ -90,10 +90,19 @@ sudo veloxhash-mining cpu set 75
 sudo veloxhash-status --short
 ```
 
+If the journal shows repeated pool `read error: "end of file"` or IPv6
+`connect error: "operation canceled"` lines, keep TLS enabled and try the
+alternate C3Pool hostname:
+
+```bash
+sudo veloxhash-mining pool set c3pool.org:33333 x monero tls
+sudo journalctl -u veloxhash -n 100 --no-pager | grep -Ei 'accepted|speed|new job|error|failed'
+```
+
 With a custom pool and rig ID:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --coin monero --rig-id rig01 --cpu-percent 75
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --pool-tls --coin monero --rig-id rig01 --cpu-percent 75
 ```
 
 Cleanup system service install:
@@ -261,7 +270,7 @@ Change the pool without editing files:
 
 ```bash
 sudo veloxhash-mining pool
-sudo veloxhash-mining pool set auto.c3pool.org:33333 x monero
+sudo veloxhash-mining pool set auto.c3pool.org:33333 x monero tls
 ```
 
 Each install writes `/etc/veloxhash/install-info.json` with the install time, source directory, binary version, git revision, port, and service state. The token is not written to this file.

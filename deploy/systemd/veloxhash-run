@@ -13,6 +13,13 @@ ARGS=(
   --log-file=/var/log/veloxhash/veloxhash.log
 )
 
+truthy() {
+  case "${1:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 is_wallet_configured() {
   local value="${1:-}"
   [[ -n "${value}" ]] || return 1
@@ -50,6 +57,9 @@ case "${VELOXHASH_MINING_ENABLED:-0}" in
         --cpu-max-threads-hint="${VELOXHASH_POLICY_CPU_PERCENT:-75}"
         --donate-level=0
       )
+      if truthy "${VELOXHASH_POOL_TLS:-1}"; then
+        ARGS+=(--tls)
+      fi
     else
       printf '%s\n' "VeloxHash wallet address is not configured; keeping CPU mining disabled." >&2
       ARGS+=(--no-cpu)

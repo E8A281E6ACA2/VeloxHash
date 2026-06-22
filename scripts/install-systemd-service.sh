@@ -349,6 +349,7 @@ pool["user"] = "${VELOXHASH_WALLET_ADDRESS}"
 pool["pass"] = "${VELOXHASH_POOL_PASSWORD}"
 pool["rig-id"] = "${VELOXHASH_RIG_ID}"
 pool["coin"] = "${VELOXHASH_COIN}"
+pool["tls"] = True
 pool["enabled"] = True
 path.write_text(json.dumps(data, indent=4) + "\n")
 PY
@@ -369,6 +370,7 @@ if [[ ! -f /etc/veloxhash/veloxhash.env ]]; then
     printf 'VELOXHASH_WALLET_ADDRESS=\n'
     printf 'VELOXHASH_POOL_URL=auto.c3pool.org:33333\n'
     printf 'VELOXHASH_POOL_PASSWORD=x\n'
+    printf 'VELOXHASH_POOL_TLS=1\n'
     printf 'VELOXHASH_COIN=monero\n'
     printf 'VELOXHASH_RIG_ID=\n'
     printf 'VELOXHASH_MINING_ENABLED=0\n'
@@ -399,6 +401,9 @@ else
   fi
   if ! grep -q '^VELOXHASH_POOL_PASSWORD=' /etc/veloxhash/veloxhash.env; then
     printf 'VELOXHASH_POOL_PASSWORD=x\n' >> /etc/veloxhash/veloxhash.env
+  fi
+  if ! grep -q '^VELOXHASH_POOL_TLS=' /etc/veloxhash/veloxhash.env; then
+    printf 'VELOXHASH_POOL_TLS=1\n' >> /etc/veloxhash/veloxhash.env
   fi
   if ! grep -q '^VELOXHASH_COIN=' /etc/veloxhash/veloxhash.env; then
     printf 'VELOXHASH_COIN=monero\n' >> /etc/veloxhash/veloxhash.env

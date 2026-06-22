@@ -15,8 +15,8 @@ Commands:
   disable   Disable CPU mining and restart VeloxHash
   status    Show mining switch and service status
   pool      Show configured pool
-  pool set <url> [password] [coin]
-           Set pool URL, optional password, optional coin, and restart VeloxHash
+  pool set <url> [password] [coin] [tls|plain]
+           Set pool URL, password, coin, TLS mode, and restart VeloxHash
   cpu       Show configured CPU thread target
   cpu set <percent>
            Set CPU thread target, 1-100, and restart VeloxHash
@@ -203,17 +203,25 @@ case "${command}" in
         pool_url="${3:-}"
         pool_password="${4:-x}"
         coin="${5:-monero}"
+        tls="${6:-tls}"
         validate_pool_url "${pool_url}"
         [[ ! "${pool_password}" =~ [[:space:]] ]] || { echo "Pool password must not contain whitespace." >&2; exit 1; }
         [[ ! "${coin}" =~ [[:space:]] ]] || { echo "Coin must not contain whitespace." >&2; exit 1; }
+        case "${tls}" in
+          tls|TLS|1|true|TRUE|yes|YES|on|ON) tls_value=1 ;;
+          plain|PLAIN|0|false|FALSE|no|NO|off|OFF) tls_value=0 ;;
+          *) echo "TLS mode must be tls or plain." >&2; exit 1 ;;
+        esac
         set_env_value VELOXHASH_POOL_URL "${pool_url}"
         set_env_value VELOXHASH_POOL_PASSWORD "${pool_password}"
+        set_env_value VELOXHASH_POOL_TLS "${tls_value}"
         set_env_value VELOXHASH_COIN "${coin}"
         chmod 0640 "${ENV_FILE}"
         chown root:veloxhash "${ENV_FILE}"
         restart_service
         echo "VeloxHash pool configured."
         echo "pool: ${pool_url}"
+        echo "tls: ${tls_value}"
         ;;
       "")
         if ! env_file_readable; then
@@ -222,6 +230,7 @@ case "${command}" in
         fi
         echo "pool: $(get_env_value VELOXHASH_POOL_URL)"
         echo "password: $(get_env_value VELOXHASH_POOL_PASSWORD)"
+        echo "tls: $(get_env_value VELOXHASH_POOL_TLS)"
         echo "coin: $(get_env_value VELOXHASH_COIN)"
         ;;
       *)
