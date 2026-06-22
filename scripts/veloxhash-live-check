@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+
+set -u
+
+SERVICE_NAME="veloxhash.service"
+ETC_DIR="/etc/veloxhash"
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+CONFIG_FILE="/etc/veloxhash/config.json"
+HOST="${VELOXHASH_LIVE_HOST:-127.0.0.1}"
+PORT="${VELOXHASH_LIVE_PORT:-}"
+WAIT_SECONDS="${VELOXHASH_LIVE_WAIT:-60}"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-live-check [--wait SECONDS]
+
+Checks the current installed service on this machine:
+  - service is active/running
+  - config has no unresolved ${VELOXHASH_...} placeholders
+  - API summary/backends are reachable
+  - recent logs show pool activity: new job, speed, accepted, or errors
+
+This command does not build, install, or publish anything.
+EOF
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+get_env_value() {
+  local key="$1"
+  if [[ -r "${ENV_FILE}" ]]; then
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+  fi
+}
+
+status_line() {
+  printf '%-8s %s\n' "$1" "$2"
+}
+
+fail() {
+  status_line "FAIL" "$*"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+}
+
+warn() {
+  status_line "WARN" "$*"
+  WARN_COUNT=$((WARN_COUNT + 1))
+}
+
+pass() {
+  status_line "PASS" "$*"
+  PASS_COUNT=$((PASS_COUNT + 1))
+}
+
+info() {
+  status_line "INFO" "$*"
+}
+
+http_get() {
+  local url="$1"
+  shift
+  curl -fsS --connect-timeout 2 --max-time 5 "$@" "${url}" 2>/dev/null
+}
+
+check_service() {
+  local active sub pid
+  active="$(systemctl show "${SERVICE_NAME}" -p ActiveState --value 2>/dev/null)"
+  sub="$(systemctl show "${SERVICE_NAME}" -p SubState --value 2>/dev/null)"
+  pid="$(systemctl show "${SERVICE_NAME}" -p MainPID --value 2>/dev/null)"
+
+  if [[ "${active}" == "active" && "${sub}" == "running" && "${pid:-0}" != "0" ]]; then
+    pass "service is active/running pid=${pid}"
+  else
+    fail "service is ${active:-unknown}/${sub:-unknown} pid=${pid:-unknown}"
+  fi
+}
+
+check_config_placeholders() {
+  if [[ ! -r "${CONFIG_FILE}" ]]; then
+    fail "config is not readable: ${CONFIG_FILE}"
+    return
+  fi
+
+  if grep -q '\${VELOXHASH_' "${CONFIG_FILE}"; then
+    fail "config still contains unresolved VELOXHASH placeholders"
+    grep -n '\${VELOXHASH_' "${CONFIG_FILE}" | sed 's/^/INFO     /'
+  else
+    pass "config has no unresolved VELOXHASH placeholders"
+  fi
+}
+
+check_api() {
+  local token summary backends base_url
+  token="$(get_env_value VELOXHASH_API_TOKEN)"
+  if [[ -z "${PORT}" ]]; then
+    PORT="$(get_env_value VELOXHASH_HTTP_PORT)"
+    PORT="${PORT:-8089}"
+  fi
+  base_url="http://${HOST}:${PORT}"
+
+  if [[ -z "${token}" ]]; then
+    warn "API token unavailable; run as root for API checks"
+    return
+  fi
+
+  summary="$(http_get "${base_url}/1/summary" -H "Authorization: Bearer ${token}")"
+  if [[ -z "${summary}" ]]; then
+    fail "authenticated summary API failed at ${base_url}/1/summary"
+    return
+  fi
+  pass "authenticated summary API reachable"
+
+  if have python3; then
+    printf '%s' "${summary}" | python3 - <<'PY' 2>/dev/null || true
+import json, sys
+data = json.load(sys.stdin)
+total = (data.get("hashrate") or {}).get("total") or []
+results = data.get("results") or {}
+connection = data.get("connection") or {}
+def rate(i):
+    try:
+        return float(total[i] or 0)
+    except Exception:
+        return 0.0
+print(f"INFO     pool={connection.get('pool', 'n/a')}")
+print(f"INFO     hashrate_now={rate(0):.2f} H/s")
+print(f"INFO     shares_good={results.get('shares_good', 0)} shares_total={results.get('shares_total', 0)}")
+PY
+  fi
+
+  backends="$(http_get "${base_url}/2/backends" -H "Authorization: Bearer ${token}")"
+  if [[ -z "${backends}" ]]; then
+    fail "authenticated backends API failed"
+    return
+  fi
+  pass "authenticated backends API reachable"
+
+  if have python3; then
+    printf '%s' "${backends}" | python3 - <<'PY' 2>/dev/null || true
+import json, sys
+data = json.load(sys.stdin)
+for item in data:
+    threads = len(item.get("threads") or [])
+    print(f"INFO     backend={item.get('type', 'unknown')} enabled={item.get('enabled')} algo={item.get('algo')} threads={threads}")
+PY
+  fi
+}
+
+check_recent_logs() {
+  local since logs
+  since="${WAIT_SECONDS} seconds ago"
+  sleep "${WAIT_SECONDS}"
+  logs="$(journalctl -u "${SERVICE_NAME}" --since "${since}" --no-pager 2>/dev/null | grep -Ei 'use pool|new job|speed|accepted|error|failed|DNS|connect|read error' || true)"
+
+  if [[ -z "${logs}" ]]; then
+    warn "no pool-related log lines in the last ${WAIT_SECONDS}s"
+    return
+  fi
+
+  printf '%s\n' "${logs}" | tail -n 40 | sed 's/^/LOG      /'
+  if printf '%s\n' "${logs}" | grep -qi 'accepted'; then
+    pass "pool accepted at least one share"
+  elif printf '%s\n' "${logs}" | grep -qi 'new job'; then
+    pass "pool connection received a new job"
+    warn "no accepted share yet in ${WAIT_SECONDS}s; this can be normal at low hashrate"
+  elif printf '%s\n' "${logs}" | grep -Eqi 'error|failed|DNS|connect|read error'; then
+    fail "recent logs contain pool/service errors"
+  else
+    warn "pool logs found, but no new job or accepted share yet"
+  fi
+}
+
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --wait)
+      [[ $# -ge 2 ]] || { echo "--wait requires a value" >&2; exit 2; }
+      WAIT_SECONDS="$2"
+      shift
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if ! [[ "${WAIT_SECONDS}" =~ ^[0-9]+$ ]]; then
+  echo "--wait must be a number" >&2
+  exit 2
+fi
+
+printf 'VeloxHash live check\n'
+printf 'Wait: %ss\n\n' "${WAIT_SECONDS}"
+
+check_service
+check_config_placeholders
+check_api
+check_recent_logs
+
+printf '\nSummary: %s pass, %s warn, %s fail\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
+(( FAIL_COUNT == 0 ))

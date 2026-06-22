@@ -97,6 +97,7 @@ install -m 0755 "${ROOT_DIR}/scripts/veloxhash-policy" "${STAGE_DIR}/${PACKAGE_D
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-cluster" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-cluster"
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-doctor" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-doctor"
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-status" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-status"
+install -m 0755 "${ROOT_DIR}/scripts/veloxhash-live-check" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-live-check"
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-validate" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-validate"
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-backup" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-backup"
 install -m 0755 "${ROOT_DIR}/scripts/veloxhash-restore" "${STAGE_DIR}/${PACKAGE_DIR}/scripts/veloxhash-restore"

@@ -18,6 +18,7 @@ POLICY_SOURCE="${ROOT_DIR}/scripts/veloxhash-policy"
 CLUSTER_SOURCE="${ROOT_DIR}/scripts/veloxhash-cluster"
 DOCTOR_SOURCE="${ROOT_DIR}/scripts/veloxhash-doctor"
 STATUS_SOURCE="${ROOT_DIR}/scripts/veloxhash-status"
+LIVE_CHECK_SOURCE="${ROOT_DIR}/scripts/veloxhash-live-check"
 VALIDATE_SOURCE="${ROOT_DIR}/scripts/veloxhash-validate"
 BACKUP_SOURCE="${ROOT_DIR}/scripts/veloxhash-backup"
 RESTORE_SOURCE="${ROOT_DIR}/scripts/veloxhash-restore"
@@ -229,6 +230,11 @@ if [[ ! -f "${STATUS_SOURCE}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${LIVE_CHECK_SOURCE}" ]]; then
+  echo "Missing live check script: ${LIVE_CHECK_SOURCE}" >&2
+  exit 1
+fi
+
 if [[ ! -f "${VALIDATE_SOURCE}" ]]; then
   echo "Missing validate script: ${VALIDATE_SOURCE}" >&2
   exit 1
@@ -297,6 +303,7 @@ install -D -m 0755 "${POLICY_SOURCE}" /usr/local/bin/veloxhash-policy
 install -D -m 0755 "${CLUSTER_SOURCE}" /usr/local/bin/veloxhash-cluster
 install -D -m 0755 "${DOCTOR_SOURCE}" /usr/local/bin/veloxhash-doctor
 install -D -m 0755 "${STATUS_SOURCE}" /usr/local/bin/veloxhash-status
+install -D -m 0755 "${LIVE_CHECK_SOURCE}" /usr/local/bin/veloxhash-live-check
 install -D -m 0755 "${VALIDATE_SOURCE}" /usr/local/bin/veloxhash-validate
 install -D -m 0755 "${BACKUP_SOURCE}" /usr/local/bin/veloxhash-backup
 install -D -m 0755 "${RESTORE_SOURCE}" /usr/local/bin/veloxhash-restore
@@ -570,6 +577,7 @@ VeloxHash systemd paths:
 - cluster monitor: /usr/local/bin/veloxhash-cluster
 - health check: /usr/local/bin/veloxhash-doctor
 - status snapshot: /usr/local/bin/veloxhash-status
+- live runtime check: /usr/local/bin/veloxhash-live-check
 - validation: /usr/local/bin/veloxhash-validate
 - backup: /usr/local/bin/veloxhash-backup
 - restore: /usr/local/bin/veloxhash-restore
@@ -601,6 +609,7 @@ Control mining:
   sudo veloxhash-policy enable
   sudo veloxhash-policy disable
   sudo veloxhash-status
+  sudo veloxhash-live-check
   sudo veloxhash-cluster status
   sudo veloxhash-validate
   sudo veloxhash-doctor
@@ -666,6 +675,7 @@ Commands:
   sudo veloxhash-policy enable
   sudo veloxhash-policy disable
   sudo veloxhash-status
+  sudo veloxhash-live-check
   sudo veloxhash-cluster status
   sudo veloxhash-validate
   sudo veloxhash-backup
