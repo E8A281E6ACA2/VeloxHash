@@ -658,9 +658,9 @@ VeloxHash systemd installation complete.
 Dashboard: http://<server-ip>:${HTTP_PORT}/
 Token file: /etc/veloxhash/veloxhash.env
 Install info: /etc/veloxhash/install-info.json
-Mining default: disabled
-Wallet default: not configured; mining will not start until a public wallet address is set
-Policy default: enabled, 75% CPU, stop on recent user activity, off during 08:00-22:00, checks every minute
+Mining defaults are controlled by /etc/veloxhash/veloxhash.env
+Wallet, pool, policy, and CPU target may be changed by the caller after install
+Policy default in a fresh env: enabled, 75% CPU, stop on recent user activity, off during 08:00-22:00, checks every minute
 
 Commands:
   sudo systemctl status veloxhash

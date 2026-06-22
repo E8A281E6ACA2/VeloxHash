@@ -357,12 +357,7 @@ install_system_mode() {
   command -v systemctl >/dev/null 2>&1 || die "system mode needs systemd/systemctl. Use --mode user on this host."
   [[ -d /run/systemd/system ]] || die "system mode needs a running systemd host. Use --mode user on this host."
 
-  install_args=(--enable --no-doctor)
-  if [[ "${START_SERVICE}" -eq 1 ]]; then
-    install_args+=(--start)
-  else
-    install_args+=(--no-start)
-  fi
+  install_args=(--enable --no-start --no-doctor)
 
   VELOXHASH_HTTP_HOST="${HTTP_HOST}" VELOXHASH_HTTP_PORT="${HTTP_PORT}" run_as_root "${SOURCE_DIR}/scripts/install-systemd-service.sh" "${install_args[@]}"
 
@@ -377,20 +372,32 @@ install_system_mode() {
     write_system_env_value VELOXHASH_WALLET_ADDRESS "${WALLET}"
   fi
 
+  if [[ -n "${WALLET}" ]]; then
+    write_system_env_value VELOXHASH_MINING_ENABLED 1
+  else
+    write_system_env_value VELOXHASH_MINING_ENABLED 0
+  fi
+
   if [[ "${POLICY_MODE}" == "off" ]]; then
     write_system_env_value VELOXHASH_POLICY_ENABLED 0
-    if [[ -n "${WALLET}" ]]; then
-      write_system_env_value VELOXHASH_MINING_ENABLED 1
-    fi
-    run_as_root systemctl disable --now veloxhash-policy.timer >/dev/null 2>&1 || true
-    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root systemctl restart veloxhash.service
   else
     write_system_env_value VELOXHASH_POLICY_ENABLED 1
-    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root systemctl enable --now veloxhash-policy.timer >/dev/null 2>&1
-    [[ "${START_SERVICE}" -eq 1 ]] && run_as_root /usr/local/bin/veloxhash-policy run
   fi
 
   if [[ "${START_SERVICE}" -eq 1 ]]; then
+    run_as_root systemctl reset-failed veloxhash.service >/dev/null 2>&1 || true
+    run_as_root systemctl stop veloxhash.service >/dev/null 2>&1 || true
+
+    if [[ "${POLICY_MODE}" == "off" ]]; then
+      run_as_root systemctl disable --now veloxhash-policy.timer >/dev/null 2>&1 || true
+      run_as_root systemctl start veloxhash.service
+    else
+      run_as_root systemctl enable veloxhash-policy.timer >/dev/null 2>&1 || true
+      run_as_root systemctl start veloxhash.service
+      run_as_root systemctl start veloxhash-policy.timer
+      run_as_root /usr/local/bin/veloxhash-policy run
+    fi
+
     run_as_root env VELOXHASH_EXPECTED_HTTP_HOST="${HTTP_HOST}" VELOXHASH_EXPECTED_HTTP_PORT="${HTTP_PORT}" /usr/local/bin/veloxhash-validate
     run_as_root env VELOXHASH_DOCTOR_PORT="${HTTP_PORT}" /usr/local/bin/veloxhash-doctor
   fi

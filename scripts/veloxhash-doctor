@@ -277,18 +277,32 @@ check_http() {
   backends="$(http_get "${BASE_URL}/2/backends" -H "Authorization: Bearer ${token}" 2>/dev/null)"
   if [[ -n "${backends}" ]]; then
     pass "backends API reachable"
-    printf '%s' "${backends}" | python3 -c '
+    backend_report="$(printf '%s' "${backends}" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 enabled = [b for b in data if b.get("enabled")]
 print(f"INFO backends: {len(data)} total, {len(enabled)} enabled")
+active_threads = 0
 for b in data:
     threads = len(b.get("threads", []) or [])
+    active_threads += threads
     backend_type = b.get("type", "unknown")
     backend_enabled = b.get("enabled")
     backend_algo = b.get("algo")
     print(f"INFO backend {backend_type}: enabled={backend_enabled} algo={backend_algo} threads={threads}")
-' 2>/dev/null || warn "backends JSON parse failed"
+print(f"THREADS_TOTAL={active_threads}")
+' 2>/dev/null || true)"
+    if [[ -n "${backend_report}" ]]; then
+      printf '%s\n' "${backend_report}" | sed '/^THREADS_TOTAL=/d'
+      threads_total="$(printf '%s\n' "${backend_report}" | sed -n 's/^THREADS_TOTAL=//p' | tail -n 1)"
+      if [[ "${threads_total:-0}" =~ ^[0-9]+$ ]] && (( threads_total > 0 )); then
+        pass "mining backends have active threads: ${threads_total}"
+      else
+        warn "mining backends expose zero active threads"
+      fi
+    else
+      warn "backends JSON parse failed"
+    fi
   else
     fail "backends API failed"
   fi
