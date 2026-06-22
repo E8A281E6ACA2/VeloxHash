@@ -27,14 +27,14 @@
         {
             "algo": null,
             "coin": "monero",
-            "url": "auto.c3pool.org:33333",
-            "user": "${VELOXHASH_WALLET_ADDRESS}",
-            "pass": "${VELOXHASH_POOL_PASSWORD}",
-            "rig-id": "${VELOXHASH_RIG_ID}",
+            "url": "127.0.0.1:1",
+            "user": "disabled",
+            "pass": "x",
+            "rig-id": null,
             "nicehash": false,
             "keepalive": true,
-            "enabled": true,
-            "tls": true,
+            "enabled": false,
+            "tls": false,
             "tls-fingerprint": null,
             "daemon": false
         }

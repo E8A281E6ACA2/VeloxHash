@@ -344,13 +344,13 @@ if pools:
 else:
     pool = {}
     pools.append(pool)
-pool["url"] = "${VELOXHASH_POOL_URL}"
-pool["user"] = "${VELOXHASH_WALLET_ADDRESS}"
-pool["pass"] = "${VELOXHASH_POOL_PASSWORD}"
-pool["rig-id"] = "${VELOXHASH_RIG_ID}"
-pool["coin"] = "${VELOXHASH_COIN}"
-pool["tls"] = True
-pool["enabled"] = True
+pool["url"] = "127.0.0.1:1"
+pool["user"] = "disabled"
+pool["pass"] = "x"
+pool["rig-id"] = None
+pool["coin"] = None
+pool["tls"] = False
+pool["enabled"] = False
 path.write_text(json.dumps(data, indent=4) + "\n")
 PY
 chown veloxhash:veloxhash /etc/veloxhash/config.json

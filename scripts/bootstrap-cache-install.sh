@@ -444,13 +444,13 @@ pools = data.setdefault("pools", [])
 if not pools:
     pools.append({})
 pool = pools[0]
-pool["url"] = "${VELOXHASH_POOL_URL}"
-pool["user"] = "${VELOXHASH_WALLET_ADDRESS}"
-pool["pass"] = "${VELOXHASH_POOL_PASSWORD}"
-pool["rig-id"] = "${VELOXHASH_RIG_ID}"
-pool["coin"] = "${VELOXHASH_COIN}"
-pool["tls"] = os.environ.get("VELOXHASH_POOL_TLS", "1").lower() in ("1", "true", "yes", "on")
-pool["enabled"] = True
+pool["url"] = "127.0.0.1:1"
+pool["user"] = "disabled"
+pool["pass"] = "x"
+pool["rig-id"] = None
+pool["coin"] = None
+pool["tls"] = False
+pool["enabled"] = False
 dst.write_text(json.dumps(data, indent=4) + "\n")
 PY
 }
