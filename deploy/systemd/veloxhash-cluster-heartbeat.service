@@ -1,0 +1,19 @@
+[Unit]
+Description=VeloxHash cluster heartbeat
+Documentation=file:/etc/veloxhash/README.systemd
+After=network-online.target veloxhash.service
+Wants=network-online.target
+ConditionPathExists=/etc/veloxhash/veloxhash.env
+
+[Service]
+Type=oneshot
+User=veloxhash
+Group=veloxhash
+EnvironmentFile=/etc/veloxhash/veloxhash.env
+ExecStart=/usr/local/bin/veloxhash-cluster heartbeat
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true

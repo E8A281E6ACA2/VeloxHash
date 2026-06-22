@@ -1,0 +1,24 @@
+{
+  "name": "veloxhash",
+  "version": "3.0.0",
+  "description": "VeloxHash miner dashboard and deployment tooling",
+  "private": true,
+  "main": "index.js",
+  "directories": {
+    "doc": "doc"
+  },
+  "scripts": {
+    "build": "node scripts/generate_cl.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "file:."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "GPLv3",
+  "bugs": {
+    "url": "https://veloxhash.local/issues"
+  },
+  "homepage": "https://veloxhash.local"
+}

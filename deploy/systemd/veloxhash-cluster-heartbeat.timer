@@ -1,0 +1,13 @@
+[Unit]
+Description=Run VeloxHash cluster heartbeat every minute
+Documentation=file:/etc/veloxhash/README.systemd
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=veloxhash-cluster-heartbeat.service
+
+[Install]
+WantedBy=timers.target

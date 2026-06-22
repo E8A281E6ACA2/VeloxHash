@@ -1,0 +1,26 @@
+[Unit]
+Description=VeloxHash cluster registry
+Documentation=file:/etc/veloxhash/README.systemd
+After=network-online.target veloxhash.service
+Wants=network-online.target
+ConditionPathExists=/etc/veloxhash/veloxhash.env
+
+[Service]
+Type=simple
+User=veloxhash
+Group=veloxhash
+EnvironmentFile=/etc/veloxhash/veloxhash.env
+WorkingDirectory=/var/lib/veloxhash
+ExecStart=/usr/local/bin/veloxhash-cluster serve
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/veloxhash
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,622 @@
+#!/usr/bin/env python3
+
+import argparse
+import json
+import os
+import secrets
+import shutil
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+ENV_FILE = Path(os.environ.get("VELOXHASH_ENV_FILE", "/etc/veloxhash/veloxhash.env"))
+STATE_DIR = Path(os.environ.get("VELOXHASH_STATE_DIR", "/var/lib/veloxhash"))
+REGISTRY_FILE = STATE_DIR / "cluster-nodes.json"
+SERVICE_NAME = "veloxhash.service"
+PRIMARY_SERVICE = "veloxhash-cluster-primary.service"
+HEARTBEAT_TIMER = "veloxhash-cluster-heartbeat.timer"
+
+
+def now_ts():
+    return int(time.time())
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def die(message, code=1):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def require_root():
+    if os.geteuid() != 0:
+        die("Please run as root.")
+
+
+def truthy(value):
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
+
+
+def read_env():
+    data = {}
+    try:
+        exists = ENV_FILE.exists()
+    except PermissionError:
+        return data
+
+    if not exists:
+        return data
+
+    try:
+        lines = ENV_FILE.read_text().splitlines()
+    except PermissionError:
+        return data
+
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        data[key] = value.strip().strip("'\"")
+    return data
+
+
+def fix_env_permissions():
+    try:
+        shutil.chown(ENV_FILE, user="root", group="veloxhash")
+    except Exception:
+        pass
+    try:
+        ENV_FILE.chmod(0o640)
+    except Exception:
+        pass
+
+
+def write_env(updates):
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lines = ENV_FILE.read_text().splitlines() if ENV_FILE.exists() else []
+    remaining = dict(updates)
+    out = []
+
+    for line in lines:
+        if "=" not in line or line.lstrip().startswith("#"):
+            out.append(line)
+            continue
+
+        key = line.split("=", 1)[0]
+        if key in remaining:
+            out.append(f"{key}={remaining.pop(key)}")
+        else:
+            out.append(line)
+
+    for key, value in remaining.items():
+        out.append(f"{key}={value}")
+
+    tmp = ENV_FILE.with_suffix(".env.tmp")
+    tmp.write_text("\n".join(out) + "\n")
+    os.replace(tmp, ENV_FILE)
+    fix_env_permissions()
+
+
+def ensure_node_id(env):
+    node_id = env.get("VELOXHASH_CLUSTER_NODE_ID", "").strip()
+    if node_id:
+        return node_id
+
+    require_root()
+    node_id = secrets.token_hex(16)
+    write_env({"VELOXHASH_CLUSTER_NODE_ID": node_id})
+    return node_id
+
+
+def default_node_name():
+    return socket.gethostname()
+
+
+def local_ip_addresses():
+    addresses = []
+    seen = set()
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_UNSPEC, type=socket.SOCK_DGRAM)
+    except Exception:
+        infos = []
+
+    for family, _type, _proto, _canon, sockaddr in infos:
+        if family not in {socket.AF_INET, socket.AF_INET6}:
+            continue
+        address = sockaddr[0]
+        if not address or address.startswith("127.") or address == "::1" or address in seen:
+            continue
+        seen.add(address)
+        addresses.append(address)
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            address = sock.getsockname()[0]
+            if address and not address.startswith("127.") and address not in seen:
+                addresses.insert(0, address)
+    except Exception:
+        pass
+
+    return addresses
+
+
+def systemctl(*args):
+    if shutil.which("systemctl") is None:
+        return subprocess.CompletedProcess(args, 127, "", "systemctl not available")
+    return subprocess.run(["systemctl", *args], text=True, capture_output=True)
+
+
+def systemctl_value(unit, key):
+    result = systemctl("show", unit, "-p", key, "--value")
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return ""
+
+
+def service_snapshot():
+    return {
+        "active": systemctl_value(SERVICE_NAME, "ActiveState") or "unknown",
+        "sub": systemctl_value(SERVICE_NAME, "SubState") or "unknown",
+        "enabled": subprocess.run(
+            ["systemctl", "is-enabled", SERVICE_NAME],
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        if shutil.which("systemctl")
+        else "unknown",
+        "pid": systemctl_value(SERVICE_NAME, "MainPID") or "unknown",
+        "restarts": systemctl_value(SERVICE_NAME, "NRestarts") or "unknown",
+    }
+
+
+def load_status_json():
+    command = shutil.which("veloxhash-status")
+    if not command:
+        local = Path(__file__).resolve().parent / "veloxhash-status"
+        command = str(local) if local.exists() else ""
+    if not command:
+        return {}
+
+    try:
+        result = subprocess.run(
+            [command, "--json"],
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+    except Exception:
+        return {}
+
+    if not result.stdout.strip():
+        return {}
+
+    try:
+        return json.loads(result.stdout)
+    except Exception:
+        return {}
+
+
+def collect_heartbeat():
+    env = read_env()
+    node_id = ensure_node_id(env)
+    env = read_env()
+    status = load_status_json()
+    node_name = env.get("VELOXHASH_CLUSTER_NODE_NAME") or default_node_name()
+
+    return {
+        "node_id": node_id,
+        "name": node_name,
+        "hostname": socket.gethostname(),
+        "local_ips": local_ip_addresses(),
+        "role": env.get("VELOXHASH_CLUSTER_ROLE", "standalone"),
+        "reported_at": now_iso(),
+        "service": status.get("service") or service_snapshot(),
+        "policy": status.get("policy") or {},
+        "process": status.get("process") or {},
+        "mining": status.get("mining") or {},
+        "http": status.get("http") or {},
+        "events": status.get("events") or [],
+        "status": status.get("status", "UNKNOWN"),
+    }
+
+
+def request_json(method, url, token, payload=None, timeout=8):
+    body = None
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if payload is not None:
+        body = json.dumps(payload).encode()
+        headers["Content-Type"] = "application/json"
+
+    request = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode()
+            return json.loads(text) if text else {}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        die(f"HTTP {exc.code} from {url}: {detail or exc.reason}")
+    except urllib.error.URLError as exc:
+        die(f"Unable to reach {url}: {exc.reason}")
+
+
+def registry_load():
+    if not REGISTRY_FILE.exists():
+        return {"nodes": {}}
+    try:
+        data = json.loads(REGISTRY_FILE.read_text())
+    except Exception:
+        return {"nodes": {}}
+    if not isinstance(data.get("nodes"), dict):
+        data["nodes"] = {}
+    return data
+
+
+def registry_save(data):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = REGISTRY_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, REGISTRY_FILE)
+
+
+def registry_payload(stale_seconds):
+    data = registry_load()
+    current = now_ts()
+    nodes = []
+
+    for node in data.get("nodes", {}).values():
+        item = dict(node)
+        last_seen = int(item.get("last_seen", 0) or 0)
+        age = max(0, current - last_seen) if last_seen else None
+        item["last_seen_age"] = age
+        item["online"] = age is not None and age <= stale_seconds
+        nodes.append(item)
+
+    nodes.sort(key=lambda item: (not item.get("online", False), item.get("name", "")))
+    return {
+        "now": now_iso(),
+        "stale_seconds": stale_seconds,
+        "online_count": sum(1 for item in nodes if item.get("online")),
+        "total_count": len(nodes),
+        "nodes": nodes,
+    }
+
+
+class ClusterHandler(BaseHTTPRequestHandler):
+    server_version = "VeloxHashCluster/1.0"
+
+    def log_message(self, fmt, *args):
+        print("%s - %s" % (self.address_string(), fmt % args), file=sys.stderr)
+
+    def send_json(self, status, payload):
+        body = json.dumps(payload, indent=2).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def authenticated(self):
+        expected = self.server.cluster_token
+        header = self.headers.get("Authorization", "")
+        if not expected:
+            return False
+        if not header.startswith("Bearer "):
+            return False
+        return secrets.compare_digest(header[7:], expected)
+
+    def require_auth(self):
+        if self.authenticated():
+            return True
+        self.send_json(401, {"error": "authorization required"})
+        return False
+
+    def do_GET(self):
+        if self.path in {"/", "/health"}:
+            self.send_json(200, {"ok": True, "service": "VeloxHash cluster registry"})
+            return
+
+        if self.path in {"/api/v1/nodes", "/api/v1/count"}:
+            if not self.require_auth():
+                return
+            payload = registry_payload(self.server.stale_seconds)
+            if self.path == "/api/v1/count":
+                payload = {
+                    "now": payload["now"],
+                    "online_count": payload["online_count"],
+                    "total_count": payload["total_count"],
+                    "stale_seconds": payload["stale_seconds"],
+                }
+            self.send_json(200, payload)
+            return
+
+        self.send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path != "/api/v1/heartbeat":
+            self.send_json(404, {"error": "not found"})
+            return
+        if not self.require_auth():
+            return
+
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        try:
+            payload = json.loads(self.rfile.read(length).decode())
+        except Exception:
+            self.send_json(400, {"error": "invalid JSON"})
+            return
+
+        node_id = str(payload.get("node_id", "")).strip()
+        if not node_id:
+            self.send_json(400, {"error": "node_id is required"})
+            return
+
+        data = registry_load()
+        node = dict(payload)
+        node["node_id"] = node_id
+        node["remote_ip"] = self.client_address[0] if self.client_address else ""
+        node["last_seen"] = now_ts()
+        node["last_seen_at"] = now_iso()
+        data.setdefault("nodes", {})[node_id] = node
+        registry_save(data)
+        self.send_json(200, registry_payload(self.server.stale_seconds))
+
+
+def cluster_url(env):
+    primary_url = env.get("VELOXHASH_CLUSTER_PRIMARY_URL", "").rstrip("/")
+    if primary_url:
+        return primary_url
+
+    role = env.get("VELOXHASH_CLUSTER_ROLE", "standalone")
+    if role == "primary":
+        port = env.get("VELOXHASH_CLUSTER_PORT", "8090")
+        return f"http://127.0.0.1:{port}"
+
+    return ""
+
+
+def command_serve(_args):
+    env = read_env()
+    if not truthy(env.get("VELOXHASH_CLUSTER_ENABLED")) or env.get("VELOXHASH_CLUSTER_ROLE") != "primary":
+        die("Cluster primary is not enabled. Run: veloxhash-cluster init-primary")
+
+    token = env.get("VELOXHASH_CLUSTER_TOKEN", "")
+    if len(token) < 24:
+        die("VELOXHASH_CLUSTER_TOKEN is missing or too short.")
+
+    host = env.get("VELOXHASH_CLUSTER_HOST", "0.0.0.0")
+    port = int(env.get("VELOXHASH_CLUSTER_PORT", "8090"))
+    stale_seconds = int(env.get("VELOXHASH_CLUSTER_STALE_SECONDS", "180"))
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    server = ThreadingHTTPServer((host, port), ClusterHandler)
+    server.cluster_token = token
+    server.stale_seconds = stale_seconds
+    print(f"VeloxHash cluster registry listening on {host}:{port}", flush=True)
+    server.serve_forever()
+
+
+def command_init_primary(args):
+    require_root()
+    env = read_env()
+    token = env.get("VELOXHASH_CLUSTER_TOKEN") or secrets.token_hex(24)
+    node_id = env.get("VELOXHASH_CLUSTER_NODE_ID") or secrets.token_hex(16)
+    node_name = args.name or env.get("VELOXHASH_CLUSTER_NODE_NAME") or default_node_name()
+    primary_url = args.primary_url or f"http://127.0.0.1:{args.port}"
+
+    write_env(
+        {
+            "VELOXHASH_CLUSTER_ENABLED": "1",
+            "VELOXHASH_CLUSTER_ROLE": "primary",
+            "VELOXHASH_CLUSTER_TOKEN": token,
+            "VELOXHASH_CLUSTER_HOST": args.host,
+            "VELOXHASH_CLUSTER_PORT": str(args.port),
+            "VELOXHASH_CLUSTER_PRIMARY_URL": primary_url.rstrip("/"),
+            "VELOXHASH_CLUSTER_NODE_ID": node_id,
+            "VELOXHASH_CLUSTER_NODE_NAME": node_name,
+            "VELOXHASH_CLUSTER_STALE_SECONDS": str(args.stale_seconds),
+        }
+    )
+
+    systemctl("daemon-reload")
+    systemctl("enable", "--now", PRIMARY_SERVICE)
+    systemctl("enable", "--now", HEARTBEAT_TIMER)
+    systemctl("restart", PRIMARY_SERVICE)
+    time.sleep(1)
+    subprocess.run([sys.argv[0], "heartbeat"], text=True)
+
+    print("VeloxHash primary cluster node enabled.")
+    print(f"Cluster URL: http://<server-ip>:{args.port}")
+    print("Cluster token:")
+    print(token)
+
+
+def command_join(args):
+    require_root()
+    env = read_env()
+    node_id = env.get("VELOXHASH_CLUSTER_NODE_ID") or secrets.token_hex(16)
+    node_name = args.name or env.get("VELOXHASH_CLUSTER_NODE_NAME") or default_node_name()
+
+    write_env(
+        {
+            "VELOXHASH_CLUSTER_ENABLED": "1",
+            "VELOXHASH_CLUSTER_ROLE": "worker",
+            "VELOXHASH_CLUSTER_TOKEN": args.token,
+            "VELOXHASH_CLUSTER_PRIMARY_URL": args.primary_url.rstrip("/"),
+            "VELOXHASH_CLUSTER_NODE_ID": node_id,
+            "VELOXHASH_CLUSTER_NODE_NAME": node_name,
+        }
+    )
+
+    systemctl("daemon-reload")
+    systemctl("disable", "--now", PRIMARY_SERVICE)
+    systemctl("enable", "--now", HEARTBEAT_TIMER)
+    subprocess.run([sys.argv[0], "heartbeat"], text=True, check=False)
+    print("VeloxHash worker node joined the cluster.")
+
+
+def command_leave(_args):
+    require_root()
+    write_env({"VELOXHASH_CLUSTER_ENABLED": "0", "VELOXHASH_CLUSTER_ROLE": "standalone"})
+    systemctl("disable", "--now", HEARTBEAT_TIMER)
+    systemctl("disable", "--now", PRIMARY_SERVICE)
+    print("VeloxHash cluster mode disabled on this node.")
+
+
+def command_heartbeat(_args):
+    env = read_env()
+    if not truthy(env.get("VELOXHASH_CLUSTER_ENABLED")):
+        return
+
+    token = env.get("VELOXHASH_CLUSTER_TOKEN", "")
+    if len(token) < 24:
+        die("Cluster token is missing or too short.")
+
+    url = cluster_url(env)
+    if not url:
+        die("Cluster primary URL is not configured.")
+
+    payload = collect_heartbeat()
+    response = request_json("POST", f"{url}/api/v1/heartbeat", token, payload)
+    print(
+        "heartbeat ok: online={online_count} total={total_count}".format(
+            online_count=response.get("online_count", "?"),
+            total_count=response.get("total_count", "?"),
+        )
+    )
+
+
+def print_nodes(payload, as_json=False):
+    if as_json:
+        print(json.dumps(payload, indent=2))
+        return
+
+    print(
+        "VeloxHash cluster: {online}/{total} online, stale after {stale}s".format(
+            online=payload.get("online_count", 0),
+            total=payload.get("total_count", 0),
+            stale=payload.get("stale_seconds", 0),
+        )
+    )
+    print("{:<8} {:<24} {:<12} {:<12} {:<10} {:<16} {}".format("STATE", "NAME", "ROLE", "STATUS", "AGE", "REMOTE-IP", "HOST"))
+    for node in payload.get("nodes", []):
+        age = node.get("last_seen_age")
+        print(
+            "{:<8} {:<24} {:<12} {:<12} {:<10} {:<16} {}".format(
+                "online" if node.get("online") else "stale",
+                str(node.get("name", ""))[:24],
+                str(node.get("role", ""))[:12],
+                str(node.get("status", ""))[:12],
+                "--" if age is None else f"{age}s",
+                str(node.get("remote_ip", ""))[:16],
+                node.get("hostname", ""),
+            )
+        )
+
+
+def command_nodes(args):
+    env = read_env()
+    token = env.get("VELOXHASH_CLUSTER_TOKEN", "")
+    if len(token) < 24:
+        die("Cluster token is unavailable. Run as root or configure cluster first.")
+
+    url = args.primary_url.rstrip("/") if args.primary_url else cluster_url(env)
+    if not url:
+        die("Cluster primary URL is not configured.")
+
+    payload = request_json("GET", f"{url}/api/v1/nodes", token)
+    print_nodes(payload, args.json)
+
+
+def command_token(_args):
+    env = read_env()
+    token = env.get("VELOXHASH_CLUSTER_TOKEN", "")
+    if not token:
+        die("Cluster token is not configured.")
+    print(token)
+
+
+def command_status(_args):
+    env = read_env()
+    enabled = truthy(env.get("VELOXHASH_CLUSTER_ENABLED"))
+    role = env.get("VELOXHASH_CLUSTER_ROLE", "standalone")
+    url = cluster_url(env) or "not configured"
+    token = env.get("VELOXHASH_CLUSTER_TOKEN", "")
+    primary_state = systemctl_value(PRIMARY_SERVICE, "ActiveState") or "unknown"
+    timer_state = systemctl_value(HEARTBEAT_TIMER, "ActiveState") or "unknown"
+
+    print(f"cluster: {'enabled' if enabled else 'disabled'}")
+    print(f"role: {role}")
+    print(f"primary-url: {url}")
+    print(f"token: {'configured' if len(token) >= 24 else 'missing'}")
+    print(f"primary-service: {primary_state}")
+    print(f"heartbeat-timer: {timer_state}")
+
+    if enabled and len(token) >= 24 and url != "not configured":
+        try:
+            payload = request_json("GET", f"{url}/api/v1/count", token)
+            print(f"nodes: {payload.get('online_count', '?')} online / {payload.get('total_count', '?')} total")
+        except SystemExit:
+            print("nodes: unavailable")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="veloxhash-cluster")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    serve = sub.add_parser("serve", help="run the primary cluster registry")
+    serve.set_defaults(func=command_serve)
+
+    init = sub.add_parser("init-primary", help="enable this machine as the primary registry")
+    init.add_argument("--host", default="0.0.0.0")
+    init.add_argument("--port", type=int, default=8090)
+    init.add_argument("--primary-url", default="")
+    init.add_argument("--name", default="")
+    init.add_argument("--stale-seconds", type=int, default=180)
+    init.set_defaults(func=command_init_primary)
+
+    join = sub.add_parser("join", help="join this machine to a primary registry")
+    join.add_argument("--primary-url", required=True)
+    join.add_argument("--token", required=True)
+    join.add_argument("--name", default="")
+    join.set_defaults(func=command_join)
+
+    leave = sub.add_parser("leave", help="disable cluster mode on this machine")
+    leave.set_defaults(func=command_leave)
+
+    heartbeat = sub.add_parser("heartbeat", help="send one heartbeat to the primary")
+    heartbeat.set_defaults(func=command_heartbeat)
+
+    nodes = sub.add_parser("nodes", help="list cluster nodes")
+    nodes.add_argument("--json", action="store_true")
+    nodes.add_argument("--primary-url", default="")
+    nodes.set_defaults(func=command_nodes)
+
+    token = sub.add_parser("token", help="print the cluster token")
+    token.set_defaults(func=command_token)
+
+    status = sub.add_parser("status", help="show local cluster state")
+    status.set_defaults(func=command_status)
+
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

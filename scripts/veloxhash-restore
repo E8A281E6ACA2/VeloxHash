@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVICE_NAME="veloxhash.service"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-restore <backup.tar.gz> [--no-restart]
+
+Restores a VeloxHash backup created by veloxhash-backup.
+
+Behavior:
+  - creates a pre-restore backup first when veloxhash-backup is available
+  - stops veloxhash.service before replacing files
+  - restores config, service files, binaries, scripts, and runner
+  - reloads systemd and restarts the service unless --no-restart is used
+
+Options:
+  --no-restart  Restore files but do not start/restart veloxhash.service
+  -h, --help    Show this help
+EOF
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "Please run as root." >&2
+    exit 1
+  fi
+}
+
+ensure_archive() {
+  local archive="$1"
+
+  if [[ -z "${archive}" ]]; then
+    echo "Missing backup archive." >&2
+    usage >&2
+    exit 2
+  fi
+
+  if [[ ! -f "${archive}" ]]; then
+    echo "Backup archive not found: ${archive}" >&2
+    exit 1
+  fi
+
+  if ! tar -tzf "${archive}" >/dev/null 2>&1; then
+    echo "Backup archive is not readable as .tar.gz: ${archive}" >&2
+    exit 1
+  fi
+
+  if ! tar -tzf "${archive}" | grep -Eq '(^|/)etc/veloxhash/|(^|/)etc/systemd/system/veloxhash\.service$|(^|/)usr/local/bin/veloxhash$'; then
+    echo "Archive does not look like a VeloxHash backup: ${archive}" >&2
+    exit 1
+  fi
+}
+
+create_service_user() {
+  if ! id -u veloxhash >/dev/null 2>&1; then
+    useradd --system --home-dir /var/lib/veloxhash --create-home --shell /usr/sbin/nologin veloxhash
+  fi
+}
+
+build_restore_list() {
+  local archive="$1"
+  local list_file="$2"
+
+  tar -tzf "${archive}" | awk '
+    /^etc\/veloxhash($|\/)/ { print; next }
+    /^etc\/systemd\/system\/veloxhash\.service$/ { print; next }
+    /^etc\/systemd\/system\/veloxhash-policy\.service$/ { print; next }
+    /^etc\/systemd\/system\/veloxhash-policy\.timer$/ { print; next }
+    /^etc\/logrotate\.d\/veloxhash$/ { print; next }
+    /^usr\/local\/bin\/veloxhash($|-)/ { print; next }
+    /^usr\/local\/lib\/veloxhash($|\/)/ { print; next }
+  ' > "${list_file}"
+
+  if [[ ! -s "${list_file}" ]]; then
+    echo "No restorable VeloxHash files found in archive." >&2
+    exit 1
+  fi
+}
+
+main() {
+  local archive=""
+  local restart=1
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-restart)
+        restart=0
+        ;;
+      -h|--help|help)
+        usage
+        exit 0
+        ;;
+      *)
+        if [[ -n "${archive}" ]]; then
+          echo "Unexpected argument: $1" >&2
+          usage >&2
+          exit 2
+        fi
+        archive="$1"
+        ;;
+    esac
+    shift
+  done
+
+  require_root
+  ensure_archive "${archive}"
+
+  if command -v veloxhash-backup >/dev/null 2>&1; then
+    printf 'Creating pre-restore backup...\n'
+    veloxhash-backup --quiet >/dev/null
+  fi
+
+  create_service_user
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "${SERVICE_NAME}" >/dev/null 2>&1; then
+    systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+  fi
+
+  local temp_dir restore_list
+  temp_dir="$(mktemp -d)"
+  restore_list="${temp_dir}/restore-paths.txt"
+  trap 'rm -rf "${temp_dir}"' EXIT
+
+  build_restore_list "${archive}" "${restore_list}"
+  tar -C / --xattrs --acls -xzf "${archive}" --files-from "${restore_list}"
+
+  install -d -m 0750 -o veloxhash -g veloxhash /etc/veloxhash /var/lib/veloxhash /var/log/veloxhash
+  chown -R veloxhash:veloxhash /etc/veloxhash /var/lib/veloxhash /var/log/veloxhash 2>/dev/null || true
+  chown root:veloxhash /etc/veloxhash/veloxhash.env 2>/dev/null || true
+  chown veloxhash:veloxhash /etc/veloxhash/config.json 2>/dev/null || true
+
+  chmod 0750 /etc/veloxhash 2>/dev/null || true
+  chmod 0640 /etc/veloxhash/config.json 2>/dev/null || true
+  chmod 0640 /etc/veloxhash/veloxhash.env 2>/dev/null || true
+  chmod 0755 /usr/local/bin/veloxhash* 2>/dev/null || true
+  chmod 0755 /usr/local/lib/veloxhash/veloxhash-run 2>/dev/null || true
+
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    if [[ "${restart}" -eq 1 ]]; then
+      systemctl start "${SERVICE_NAME}"
+    fi
+  fi
+
+  printf 'VeloxHash restore complete: %s\n' "${archive}"
+  if [[ "${restart}" -eq 1 ]]; then
+    printf 'Check with: sudo veloxhash-status\n'
+  else
+    printf 'Service was not restarted because --no-restart was used.\n'
+  fi
+}
+
+main "$@"

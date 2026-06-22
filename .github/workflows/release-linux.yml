@@ -1,0 +1,42 @@
+name: Release Linux
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-amd64:
+    name: Build Linux amd64 package
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libuv1-dev libssl-dev libhwloc-dev
+
+      - name: Build package
+        run: ./scripts/package-release.sh --version "${GITHUB_REF_NAME:-dev}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veloxhash-linux-amd64
+          path: |
+            dist/veloxhash-linux-amd64.tar.gz
+            dist/veloxhash-*-linux-amd64.tar.gz
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/veloxhash-linux-amd64.tar.gz
+            dist/veloxhash-*-linux-amd64.tar.gz

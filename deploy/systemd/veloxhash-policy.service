@@ -1,0 +1,8 @@
+[Unit]
+Description=VeloxHash automatic mining policy
+Documentation=file:/etc/veloxhash/README.systemd
+After=veloxhash.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/veloxhash-policy run

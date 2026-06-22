@@ -1,0 +1,188 @@
+/* Generated from dashboard/index.html. Keep the editable source there. */
+#ifndef VELOXHASH_DASHBOARD_HTML_H
+#define VELOXHASH_DASHBOARD_HTML_H
+
+namespace xmrig {
+
+static const char *kDashboardHtml = R"VHX(
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VeloxHash Dashboard</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f2;
+  --panel: #ffffff;
+  --panel-soft: #f8f8f5;
+  --text: #171a16;
+  --muted: #667064;
+  --line: #d9ddd4;
+  --accent: #1f8a5b;
+  --accent-strong: #17734b;
+  --accent-soft: #dff3e8;
+  --warn: #a96a00;
+  --warn-soft: #fff1d6;
+  --danger: #b33a3a;
+  --danger-soft: #f9e1df;
+  --ok: #176d47;
+  --shadow: 0 1px 2px rgba(23, 26, 22, 0.08);
+}
+* { box-sizing: border-box; letter-spacing: 0; }
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+button, input { font: inherit; }
+.shell { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 28px; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; margin-bottom: 18px; }
+.brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.brand h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 750; }
+.brand .sub { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.status { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--muted); box-shadow: var(--shadow); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.status.ok .dot { background: var(--ok); }
+.status.error .dot { background: var(--danger); }
+.btn { min-height: 34px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); cursor: pointer; box-shadow: var(--shadow); }
+.btn.primary { border-color: var(--accent-strong); background: var(--accent); color: #fff; }
+.btn.danger { border-color: #a93131; background: var(--danger); color: #fff; }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.tokenbar { display: none; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; margin-bottom: 16px; }
+.tokenbar.visible { display: grid; }
+.tokenbar input { min-height: 36px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0 11px; background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.metric, .panel { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); }
+.metric { min-height: 108px; padding: 14px; display: flex; flex-direction: column; justify-content: space-between; }
+.label { color: var(--muted); font-size: 12px; line-height: 1.3; text-transform: uppercase; }
+.value { margin-top: 8px; font-size: 26px; line-height: 1.1; font-weight: 760; overflow-wrap: anywhere; }
+.hint { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+.main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr); gap: 12px; margin-top: 12px; }
+.panel { min-width: 0; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 46px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.panel-title { margin: 0; font-size: 15px; line-height: 1.2; font-weight: 720; }
+.panel-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.panel-body { padding: 14px; }
+.chart-wrap { height: 272px; width: 100%; }
+#hashrateChart { display: block; width: 100%; height: 100%; }
+.kv { display: grid; grid-template-columns: 126px minmax(0, 1fr); gap: 10px 12px; align-items: start; }
+.kv .k { color: var(--muted); min-width: 0; }
+.kv .v { min-width: 0; overflow-wrap: anywhere; }
+.thread-list { display: flex; flex-direction: column; gap: 8px; }
+.thread { display: grid; grid-template-columns: minmax(112px, 0.55fr) minmax(140px, 1fr) minmax(78px, 0.35fr); align-items: center; gap: 10px; min-height: 42px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); }
+.thread-name, .thread-rate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-rate { text-align: right; font-variant-numeric: tabular-nums; }
+.bar { height: 9px; overflow: hidden; border-radius: 999px; background: #e9ece5; }
+.fill { display: block; height: 100%; width: 0%; background: var(--accent); }
+.pill { display: inline-flex; align-items: center; min-height: 24px; max-width: 100%; padding: 0 8px; border-radius: 999px; background: var(--accent-soft); color: var(--ok); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.danger { background: var(--danger-soft); color: var(--danger); }
+.empty { min-height: 80px; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--line); border-radius: 8px; color: var(--muted); text-align: center; padding: 12px; }
+.notice { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.log-list { display: flex; flex-direction: column; gap: 8px; }
+.log-item { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); color: var(--text); overflow-wrap: anywhere; }
+.backend-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.backend { min-height: 86px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); }
+.backend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.backend-title { font-weight: 720; text-transform: uppercase; }
+.backend-meta { color: var(--muted); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+@media (max-width: 920px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .main { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .shell { width: min(100% - 20px, 1180px); padding-top: 14px; } .topbar { align-items: stretch; flex-direction: column; } .actions, .panel-actions { justify-content: flex-start; } .grid, .tokenbar, .backend-list { grid-template-columns: 1fr; } .metric { min-height: 96px; } .thread { grid-template-columns: 1fr; } .thread-rate { text-align: left; } .kv { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="topbar">
+    <div class="brand"><h1>VeloxHash</h1><div id="subtitle" class="sub">Dashboard</div></div>
+    <div class="actions"><div id="status" class="status"><span class="dot"></span><span id="statusText">Connecting</span></div><button id="refreshBtn" class="btn" type="button">Refresh</button></div>
+  </header>
+  <form id="tokenbar" class="tokenbar" autocomplete="off"><input id="tokenInput" type="password" placeholder="API token" spellcheck="false"><button class="btn primary" type="submit">Save</button><button id="clearTokenBtn" class="btn" type="button">Clear</button></form>
+  <section class="grid" aria-label="metrics">
+    <div class="metric"><div><div class="label">Hashrate</div><div id="hashrateNow" class="value">--</div></div><div id="hashrateAvg" class="hint">Avg --</div></div>
+    <div class="metric"><div><div class="label">Shares</div><div id="shares" class="value">--</div></div><div id="sharesMeta" class="hint">Rejected --</div></div>
+    <div class="metric"><div><div class="label">Connection</div><div id="poolState" class="value">--</div></div><div id="poolMeta" class="hint">Ping --</div></div>
+    <div class="metric"><div><div class="label">Uptime</div><div id="uptime" class="value">--</div></div><div id="worker" class="hint">Worker --</div></div>
+  </section>
+  <section class="main">
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">Hashrate</h2><span id="algo" class="pill">--</span></div><div class="panel-body"><div class="chart-wrap"><canvas id="hashrateChart"></canvas></div></div></div>
+    <div class="panel"><div class="panel-head"><h2 class="panel-title">Miner</h2><div class="panel-actions"><span id="paused" class="pill">--</span><span id="restricted" class="pill warn">--</span></div></div><div class="panel-body"><div class="kv"><div class="k">Version</div><div id="version" class="v">--</div><div class="k">CPU</div><div id="cpu" class="v">--</div><div class="k">Features</div><div id="features" class="v">--</div><div class="k">Pool</div><div id="pool" class="v">--</div><div class="k">Mining</div><div id="miningMode" class="v">--</div><div class="k">Load</div><div id="load" class="v">--</div><div class="k">Memory</div><div id="memory" class="v">--</div><div class="k">API mode</div><div id="apiMode" class="v">--</div></div></div></div>
+  </section>
+  <section class="panel" style="margin-top:12px"><div class="panel-head"><h2 class="panel-title">Controls</h2><span id="controlState" class="pill warn">Read only</span></div><div class="panel-body"><div class="panel-actions" style="justify-content:flex-start"><button id="pauseBtn" class="btn" type="button">Pause</button><button id="resumeBtn" class="btn primary" type="button">Resume</button><button id="stopBtn" class="btn danger" type="button">Stop</button></div><p id="controlNotice" class="notice">Control actions require an API token and unrestricted HTTP API mode.</p></div></section>
+  <section class="panel" style="margin-top:12px"><div class="panel-head"><h2 class="panel-title">Backends</h2><span id="backendCount" class="pill">0</span></div><div class="panel-body"><div id="backends" class="backend-list"><div class="empty">No backend data</div></div></div></section>
+  <section class="panel" style="margin-top:12px"><div class="panel-head"><h2 class="panel-title">Threads</h2><span id="threadCount" class="pill">0</span></div><div class="panel-body"><div id="threads" class="thread-list"><div class="empty">No thread data</div></div></div></section>
+  <section class="panel" style="margin-top:12px"><div class="panel-head"><h2 class="panel-title">Recent Errors</h2><span id="errorCount" class="pill">0</span></div><div class="panel-body"><div id="errors" class="log-list"><div class="empty">No recent errors</div></div></div></section>
+</main>
+<script>
+(function () {
+  "use strict";
+  var els = {
+    status: document.getElementById("status"), statusText: document.getElementById("statusText"), subtitle: document.getElementById("subtitle"),
+    tokenbar: document.getElementById("tokenbar"), tokenInput: document.getElementById("tokenInput"), clearTokenBtn: document.getElementById("clearTokenBtn"),
+    refreshBtn: document.getElementById("refreshBtn"), hashrateNow: document.getElementById("hashrateNow"), hashrateAvg: document.getElementById("hashrateAvg"),
+    shares: document.getElementById("shares"), sharesMeta: document.getElementById("sharesMeta"), poolState: document.getElementById("poolState"),
+    poolMeta: document.getElementById("poolMeta"), uptime: document.getElementById("uptime"), worker: document.getElementById("worker"), algo: document.getElementById("algo"),
+    restricted: document.getElementById("restricted"), paused: document.getElementById("paused"), version: document.getElementById("version"), cpu: document.getElementById("cpu"),
+    features: document.getElementById("features"), pool: document.getElementById("pool"), miningMode: document.getElementById("miningMode"), load: document.getElementById("load"), memory: document.getElementById("memory"),
+    apiMode: document.getElementById("apiMode"), backends: document.getElementById("backends"), backendCount: document.getElementById("backendCount"), threads: document.getElementById("threads"), threadCount: document.getElementById("threadCount"),
+    errors: document.getElementById("errors"), errorCount: document.getElementById("errorCount"), chart: document.getElementById("hashrateChart"),
+    pauseBtn: document.getElementById("pauseBtn"), resumeBtn: document.getElementById("resumeBtn"), stopBtn: document.getElementById("stopBtn"),
+    controlState: document.getElementById("controlState"), controlNotice: document.getElementById("controlNotice")
+  };
+  var tokenKey = "veloxhash.apiToken";
+  var history = [];
+  var loading = false;
+  var timer = null;
+  var lastSummary = null;
+  var backendSnapshot = [];
+  function getToken() { try { return localStorage.getItem(tokenKey) || ""; } catch (e) { return ""; } }
+  function setToken(value) { try { if (value) { localStorage.setItem(tokenKey, value); } else { localStorage.removeItem(tokenKey); } } catch (e) {} }
+  function text(node, value) { node.textContent = value == null || value === "" ? "--" : String(value); }
+  function finite(value) { return typeof value === "number" && isFinite(value); }
+  function formatRate(value) { if (!finite(value)) { return "--"; } var units = ["H/s", "KH/s", "MH/s", "GH/s"]; var idx = 0; while (Math.abs(value) >= 1000 && idx < units.length - 1) { value = value / 1000; idx += 1; } return value.toFixed(idx === 0 ? 1 : 2) + " " + units[idx]; }
+  function formatNumber(value) { return finite(value) ? Math.round(value).toLocaleString() : "--"; }
+  function formatSeconds(seconds) { if (!finite(seconds)) { return "--"; } seconds = Math.max(0, Math.floor(seconds)); var days = Math.floor(seconds / 86400); seconds -= days * 86400; var hours = Math.floor(seconds / 3600); seconds -= hours * 3600; var minutes = Math.floor(seconds / 60); if (days > 0) { return days + "d " + hours + "h"; } if (hours > 0) { return hours + "h " + minutes + "m"; } return minutes + "m"; }
+  function formatBytes(bytes) { if (!finite(bytes)) { return "--"; } var units = ["B", "KB", "MB", "GB", "TB"]; var idx = 0; while (bytes >= 1024 && idx < units.length - 1) { bytes = bytes / 1024; idx += 1; } return bytes.toFixed(idx === 0 ? 0 : 1) + " " + units[idx]; }
+  function firstNumber(values) { if (!Array.isArray(values)) { return null; } for (var i = 0; i < values.length; i += 1) { if (finite(values[i])) { return values[i]; } } return null; }
+  function setStatus(kind, value) { els.status.classList.remove("ok", "error"); if (kind) { els.status.classList.add(kind); } text(els.statusText, value); }
+  function authHeaders(extra) { var headers = extra || {}; var token = getToken(); if (token) { headers.Authorization = "Bearer " + token; } return headers; }
+  function parseJson(response) { return response.text().then(function (body) { return body ? JSON.parse(body) : {}; }); }
+  function getJson(path) { return fetch(path, { method: "GET", headers: authHeaders(), cache: "no-store" }).then(function (response) { if (response.status === 401 || response.status === 403) { var err = new Error("Authorization required"); err.auth = true; throw err; } if (!response.ok) { throw new Error(response.status + " " + response.statusText); } return response.json(); }); }
+  function rpc(method) { return fetch("/json_rpc", { method: "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: method }) }).then(function (response) { if (response.status === 401 || response.status === 403) { var err = new Error(response.status === 403 ? "Control API is restricted" : "Authorization required"); err.auth = true; throw err; } if (!response.ok) { throw new Error(response.status + " " + response.statusText); } return parseJson(response); }).then(function (data) { if (data && data.error) { throw new Error(data.error.message || "RPC failed"); } return data; }); }
+  function collectErrors(summary) { var out = []; function append(source, value) { if (!value) { return; } if (Array.isArray(value)) { value.forEach(function (item) { append(source, item); }); return; } if (typeof value === "object") { out.push(source + ": " + JSON.stringify(value)); return; } out.push(source + ": " + value); } if (summary.results) { append("results", summary.results.error_log); } if (summary.connection) { append("connection", summary.connection.error_log); append("connection", summary.connection.error); } return out; }
+  function enabledBackendCount() { return backendSnapshot.filter(function (backend) { return backend && backend.enabled; }).length; }
+  function miningDisabled(summary) { if (backendSnapshot.length) { return enabledBackendCount() === 0; } return !!(summary && Array.isArray(summary.algorithms) && summary.algorithms.length === 0); }
+  function backendThreads(backend) { return backend && Array.isArray(backend.threads) ? backend.threads.length : 0; }
+  function updateControls(summary) { var token = getToken(); var canControl = !!token && summary && summary.restricted === false; var disabled = miningDisabled(summary); var paused = !!(summary && summary.paused); text(els.paused, disabled ? "CPU disabled" : paused ? "Paused" : "Running"); els.paused.classList.toggle("warn", paused || disabled); els.paused.classList.toggle("danger", disabled); text(els.controlState, disabled ? "Backend disabled" : canControl ? "Control enabled" : "Read only"); els.controlState.classList.toggle("warn", !canControl || disabled); els.controlState.classList.toggle("danger", disabled); els.pauseBtn.disabled = !canControl || paused || disabled; els.resumeBtn.disabled = !canControl || !paused || disabled; els.stopBtn.disabled = !canControl; text(els.apiMode, summary && summary.restricted === false ? "Unrestricted with token required" : "Restricted read-only"); text(els.controlNotice, disabled ? "CPU backend is disabled at service level; API and dashboard remain online." : canControl ? "Pause, resume, and stop commands are available for this node." : "Control actions require a saved API token and unrestricted HTTP API mode."); }
+  function updateSummary(summary) { lastSummary = summary; var total = summary.hashrate && Array.isArray(summary.hashrate.total) ? summary.hashrate.total : []; var currentRate = finite(total[0]) ? total[0] : null; var avgRate = finite(total[1]) ? total[1] : null; var longRate = finite(total[2]) ? total[2] : null; var highest = summary.hashrate && finite(summary.hashrate.highest) ? summary.hashrate.highest : null; var results = summary.results || {}; var conn = summary.connection || {}; var resources = summary.resources || {}; var mem = resources.memory || {}; var sharesGood = finite(results.shares_good) ? results.shares_good : 0; var sharesTotal = finite(results.shares_total) ? results.shares_total : 0; text(els.hashrateNow, formatRate(currentRate)); text(els.hashrateAvg, "Avg " + formatRate(avgRate) + " / 15m " + formatRate(longRate) + " / High " + formatRate(highest)); text(els.shares, formatNumber(sharesGood) + " / " + formatNumber(sharesTotal)); text(els.sharesMeta, "Rejected " + formatNumber(Math.max(0, sharesTotal - sharesGood)) + " / Diff " + formatNumber(results.diff_current)); text(els.poolState, conn.pool ? "Online" : "Idle"); text(els.poolMeta, "Ping " + (finite(conn.ping) ? conn.ping + " ms" : "--") + " / Failures " + formatNumber(conn.failures)); text(els.uptime, formatSeconds(summary.uptime || conn.uptime)); text(els.worker, "Worker " + (summary.worker_id || "--")); text(els.algo, summary.algo || "auto"); text(els.restricted, summary.restricted ? "Restricted" : "Unrestricted"); els.restricted.classList.toggle("warn", !!summary.restricted); els.restricted.classList.toggle("danger", summary.restricted === false && !getToken()); text(els.version, summary.version || summary.ua || "--"); text(els.cpu, summary.cpu && summary.cpu.brand ? summary.cpu.brand : "--"); text(els.features, Array.isArray(summary.features) && summary.features.length ? summary.features.join(", ") : "--"); text(els.pool, conn.pool || "--"); text(els.miningMode, miningDisabled(summary) ? "CPU backend disabled" : summary.paused ? "Paused" : "Active backends " + enabledBackendCount()); text(els.load, Array.isArray(resources.load_average) ? resources.load_average.join(", ") : "--"); text(els.memory, finite(mem.free) && finite(mem.total) ? formatBytes(mem.free) + " free / " + formatBytes(mem.total) : "--"); text(els.subtitle, summary.id ? "Node " + summary.id : "Dashboard"); updateControls(summary); updateThreads(summary.hashrate && Array.isArray(summary.hashrate.threads) ? summary.hashrate.threads : []); updateErrors(collectErrors(summary)); if (finite(currentRate)) { history.push({ time: Date.now(), value: currentRate }); if (history.length > 80) { history.shift(); } } drawChart(); }
+  function updateBackends(data) { var backends = Array.isArray(data) ? data : []; backendSnapshot = backends; text(els.backendCount, backends.length); if (!backends.length) { els.backends.innerHTML = '<div class="empty">No backend data</div>'; updateControls(lastSummary); return; } els.backends.innerHTML = ""; backends.forEach(function (backend) { var card = document.createElement("div"); card.className = "backend"; var head = document.createElement("div"); head.className = "backend-head"; var title = document.createElement("div"); title.className = "backend-title"; title.textContent = backend.type || "backend"; var state = document.createElement("span"); state.className = "pill" + (backend.enabled ? "" : " warn"); state.textContent = backend.enabled ? "Enabled" : "Disabled"; head.appendChild(title); head.appendChild(state); var meta = document.createElement("div"); meta.className = "backend-meta"; var details = []; details.push("Algo " + (backend.algo || "--")); details.push("Profile " + (backend.profile || "--")); details.push("Threads " + backendThreads(backend)); if (finite(backend.memory)) { details.push("Memory " + formatBytes(backend.memory)); } if (backend.type === "cpu") { details.push("MSR " + (backend.msr ? "on" : "off")); } meta.textContent = details.join(" / "); card.appendChild(head); card.appendChild(meta); els.backends.appendChild(card); }); if (lastSummary) { text(els.miningMode, miningDisabled(lastSummary) ? "CPU backend disabled" : lastSummary.paused ? "Paused" : "Active backends " + enabledBackendCount()); } updateControls(lastSummary); }
+  function updateThreads(data) { var threads = Array.isArray(data) ? data : data && Array.isArray(data.threads) ? data.threads : []; text(els.threadCount, threads.length); if (!threads.length) { els.threads.innerHTML = '<div class="empty">No thread data</div>'; return; } var max = 0; var rates = threads.map(function (thread) { var rate = Array.isArray(thread) ? firstNumber(thread) : firstNumber(thread.hashrate); max = Math.max(max, rate || 0); return rate; }); els.threads.innerHTML = ""; threads.forEach(function (thread, idx) { var rate = rates[idx]; var row = document.createElement("div"); row.className = "thread"; var name = document.createElement("div"); name.className = "thread-name"; name.textContent = Array.isArray(thread) ? "CPU thread " + (idx + 1) : (thread.type || "thread") + " " + (idx + 1) + (thread.algo ? " / " + thread.algo : ""); var bar = document.createElement("div"); bar.className = "bar"; var fill = document.createElement("span"); fill.className = "fill"; fill.style.width = max > 0 && finite(rate) ? Math.max(2, Math.min(100, rate / max * 100)).toFixed(1) + "%" : "0%"; bar.appendChild(fill); var value = document.createElement("div"); value.className = "thread-rate"; value.textContent = formatRate(rate); row.appendChild(name); row.appendChild(bar); row.appendChild(value); els.threads.appendChild(row); }); }
+  function updateErrors(errors) { text(els.errorCount, errors.length); if (!errors.length) { els.errors.innerHTML = '<div class="empty">No recent errors</div>'; return; } els.errors.innerHTML = ""; errors.slice(-8).forEach(function (message) { var row = document.createElement("div"); row.className = "log-item"; row.textContent = message; els.errors.appendChild(row); }); }
+  function drawChart() { var canvas = els.chart; var rect = canvas.getBoundingClientRect(); var dpr = Math.max(1, window.devicePixelRatio || 1); var width = Math.max(320, Math.floor(rect.width)); var height = Math.max(180, Math.floor(rect.height)); canvas.width = Math.floor(width * dpr); canvas.height = Math.floor(height * dpr); var ctx = canvas.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, width, height); ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, width, height); var pad = { left: 46, right: 14, top: 12, bottom: 28 }; var plotW = width - pad.left - pad.right; var plotH = height - pad.top - pad.bottom; ctx.strokeStyle = "#d9ddd4"; ctx.lineWidth = 1; ctx.beginPath(); for (var i = 0; i <= 4; i += 1) { var y = pad.top + plotH * i / 4; ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); } ctx.stroke(); if (history.length < 2) { ctx.fillStyle = "#667064"; ctx.font = "13px system-ui, sans-serif"; ctx.fillText("Waiting for samples", pad.left, pad.top + 24); return; } var values = history.map(function (point) { return point.value; }); var min = Math.min.apply(Math, values); var max = Math.max.apply(Math, values); if (max === min) { max += 1; min = Math.max(0, min - 1); } function xAt(index) { return pad.left + plotW * index / Math.max(1, history.length - 1); } function yAt(value) { return pad.top + plotH - ((value - min) / (max - min)) * plotH; } ctx.fillStyle = "#667064"; ctx.font = "12px system-ui, sans-serif"; ctx.fillText(formatRate(max), 4, pad.top + 10); ctx.fillText(formatRate(min), 4, pad.top + plotH); ctx.strokeStyle = "#1f8a5b"; ctx.lineWidth = 2; ctx.beginPath(); history.forEach(function (point, idx) { var x = xAt(idx); var y = yAt(point.value); if (idx === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); } }); ctx.stroke(); var latest = history[history.length - 1]; ctx.fillStyle = "#1f8a5b"; ctx.beginPath(); ctx.arc(xAt(history.length - 1), yAt(latest.value), 4, 0, Math.PI * 2); ctx.fill(); }
+  function refresh() { if (loading) { return Promise.resolve(); } loading = true; els.refreshBtn.disabled = true; setStatus("", "Updating"); return getJson("/1/summary").then(function (summary) { updateSummary(summary); return getJson("/2/backends").then(function (backends) { updateBackends(backends); return summary; }, function () { updateBackends([]); return summary; }); }).then(function (summary) { els.tokenbar.classList.toggle("visible", false); setStatus("ok", miningDisabled(summary) ? "API online" : summary.paused ? "Paused" : "Online"); }).catch(function (err) { if (err && err.auth) { els.tokenbar.classList.toggle("visible", true); setStatus("error", "Authorization required"); updateControls(lastSummary); } else { setStatus("error", err && err.message ? err.message : "Offline"); } }).then(function () { loading = false; els.refreshBtn.disabled = false; }); }
+  function command(method) { setStatus("", method.charAt(0).toUpperCase() + method.slice(1) + "..."); els.pauseBtn.disabled = true; els.resumeBtn.disabled = true; els.stopBtn.disabled = true; return rpc(method).then(function () { return refresh(); }).catch(function (err) { setStatus("error", err && err.message ? err.message : "Command failed"); updateControls(lastSummary); }); }
+  els.tokenInput.value = getToken();
+  els.tokenbar.addEventListener("submit", function (event) { event.preventDefault(); setToken(els.tokenInput.value.trim()); refresh(); });
+  els.clearTokenBtn.addEventListener("click", function () { els.tokenInput.value = ""; setToken(""); refresh(); });
+  els.refreshBtn.addEventListener("click", refresh);
+  els.pauseBtn.addEventListener("click", function () { command("pause"); });
+  els.resumeBtn.addEventListener("click", function () { command("resume"); });
+  els.stopBtn.addEventListener("click", function () { if (window.confirm("Stop VeloxHash on this node?")) { command("stop"); } });
+  window.addEventListener("resize", drawChart);
+  refresh();
+  timer = setInterval(refresh, 3000);
+  window.addEventListener("beforeunload", function () { clearInterval(timer); });
+}());
+</script>
+</body>
+</html>
+)VHX";
+
+} // namespace xmrig
+
+#endif // VELOXHASH_DASHBOARD_HTML_H

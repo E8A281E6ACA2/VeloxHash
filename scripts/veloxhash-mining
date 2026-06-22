@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ENV_FILE="/etc/veloxhash/veloxhash.env"
+ETC_DIR="/etc/veloxhash"
+SERVICE_NAME="veloxhash.service"
+
+usage() {
+  cat <<'EOF'
+Usage: veloxhash-mining <command>
+
+Commands:
+  enable    Enable CPU mining and restart VeloxHash
+  disable   Disable CPU mining and restart VeloxHash
+  status    Show mining switch and service status
+  pool      Show configured pool
+  pool set <url> [password] [coin]
+           Set pool URL, optional password, optional coin, and restart VeloxHash
+  wallet    Show configured public wallet address status
+  wallet set <address>
+           Set the public pool payout address and restart VeloxHash
+  wallet clear
+           Clear the wallet address, disable mining, and restart VeloxHash
+  token     Print the dashboard/API token
+  token rotate
+           Rotate the dashboard/API token and restart VeloxHash
+EOF
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "Please run as root." >&2
+    exit 1
+  fi
+}
+
+require_env_file() {
+  if [[ ! -x "${ETC_DIR}" && "${EUID}" -ne 0 ]]; then
+    echo "Cannot access ${ETC_DIR}. Run as root." >&2
+    exit 1
+  fi
+
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    echo "Missing ${ENV_FILE}. Install the service first." >&2
+    exit 1
+  fi
+}
+
+env_file_readable() {
+  [[ -x "${ETC_DIR}" && -r "${ENV_FILE}" ]]
+}
+
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  python3 - "$ENV_FILE" "$key" "$value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+value = sys.argv[3]
+line = f"{key}={value}"
+lines = path.read_text().splitlines()
+updated = False
+out = []
+for item in lines:
+    if item.startswith(f"{key}="):
+        out.append(line)
+        updated = True
+    else:
+        out.append(item)
+if not updated:
+    out.append(line)
+path.write_text("\n".join(out) + "\n")
+PY
+}
+
+get_env_value() {
+  local key="$1"
+  sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+}
+
+wallet_is_configured() {
+  local wallet="${1:-}"
+  [[ -n "${wallet}" ]] || return 1
+  [[ "${wallet}" != "YOUR_WALLET_ADDRESS" ]] || return 1
+  [[ "${wallet}" != "\${VELOXHASH_WALLET_ADDRESS}" ]] || return 1
+  [[ ! "${wallet}" =~ ^[[:space:]]+$ ]] || return 1
+}
+
+validate_public_wallet() {
+  local wallet="$1"
+  if [[ -z "${wallet}" ]]; then
+    echo "Wallet address is empty." >&2
+    return 1
+  fi
+
+  if [[ "${wallet}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "Refusing a value that looks like a private key. Use the public wallet address only." >&2
+    return 1
+  fi
+
+  if [[ "${wallet}" =~ [[:space:]] ]]; then
+    echo "Wallet address must not contain whitespace." >&2
+    return 1
+  fi
+}
+
+validate_pool_url() {
+  local url="$1"
+  if [[ -z "${url}" ]]; then
+    echo "Pool URL is empty." >&2
+    return 1
+  fi
+
+  if [[ "${url}" =~ [[:space:]] ]]; then
+    echo "Pool URL must not contain whitespace." >&2
+    return 1
+  fi
+
+  if [[ "${url}" != *:* ]]; then
+    echo "Pool URL should include host:port, for example auto.c3pool.org:33333." >&2
+    return 1
+  fi
+}
+
+restart_service() {
+  systemctl restart "${SERVICE_NAME}"
+}
+
+command="${1:-}"
+subcommand="${2:-}"
+
+case "${command}" in
+  enable)
+    require_root
+    require_env_file
+    wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+    if ! wallet_is_configured "${wallet}"; then
+      echo "Wallet address is not configured; mining will remain disabled." >&2
+      echo "Set it first: sudo veloxhash-mining wallet set <public-wallet-address>" >&2
+      exit 1
+    fi
+    set_env_value VELOXHASH_MINING_ENABLED 1
+    chmod 0640 "${ENV_FILE}"
+    chown root:veloxhash "${ENV_FILE}"
+    restart_service
+    echo "VeloxHash mining enabled."
+    ;;
+  disable)
+    require_root
+    require_env_file
+    set_env_value VELOXHASH_MINING_ENABLED 0
+    chmod 0640 "${ENV_FILE}"
+    chown root:veloxhash "${ENV_FILE}"
+    restart_service
+    echo "VeloxHash mining disabled. Dashboard/API remain online."
+    ;;
+  status)
+    if env_file_readable; then
+      state="$(get_env_value VELOXHASH_MINING_ENABLED)"
+      wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+      case "${state:-0}" in
+        1|true|TRUE|yes|YES|on|ON) echo "mining: enabled" ;;
+        *) echo "mining: disabled" ;;
+      esac
+      if wallet_is_configured "${wallet}"; then
+        echo "wallet: configured"
+      else
+        echo "wallet: not configured"
+      fi
+      echo "pool: $(get_env_value VELOXHASH_POOL_URL)"
+      echo "coin: $(get_env_value VELOXHASH_COIN)"
+    else
+      echo "mining: unknown (run as root to read ${ENV_FILE})"
+      echo "wallet: unknown (run as root to read ${ENV_FILE})"
+      echo "pool: unknown (run as root to read ${ENV_FILE})"
+    fi
+    systemctl show "${SERVICE_NAME}" -p ActiveState -p SubState -p MainPID -p NRestarts --no-pager
+    ;;
+  pool)
+    require_env_file
+    case "${subcommand}" in
+      set)
+        require_root
+        pool_url="${3:-}"
+        pool_password="${4:-x}"
+        coin="${5:-monero}"
+        validate_pool_url "${pool_url}"
+        [[ ! "${pool_password}" =~ [[:space:]] ]] || { echo "Pool password must not contain whitespace." >&2; exit 1; }
+        [[ ! "${coin}" =~ [[:space:]] ]] || { echo "Coin must not contain whitespace." >&2; exit 1; }
+        set_env_value VELOXHASH_POOL_URL "${pool_url}"
+        set_env_value VELOXHASH_POOL_PASSWORD "${pool_password}"
+        set_env_value VELOXHASH_COIN "${coin}"
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        restart_service
+        echo "VeloxHash pool configured."
+        echo "pool: ${pool_url}"
+        ;;
+      "")
+        if ! env_file_readable; then
+          echo "Cannot read ${ENV_FILE}. Run as root." >&2
+          exit 1
+        fi
+        echo "pool: $(get_env_value VELOXHASH_POOL_URL)"
+        echo "password: $(get_env_value VELOXHASH_POOL_PASSWORD)"
+        echo "coin: $(get_env_value VELOXHASH_COIN)"
+        ;;
+      *)
+        echo "Unknown pool command: ${subcommand}" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  wallet)
+    require_env_file
+    case "${subcommand}" in
+      set)
+        require_root
+        wallet="${3:-}"
+        validate_public_wallet "${wallet}"
+        set_env_value VELOXHASH_WALLET_ADDRESS "${wallet}"
+        if [[ -z "$(get_env_value VELOXHASH_POOL_URL)" ]]; then
+          set_env_value VELOXHASH_POOL_URL "auto.c3pool.org:33333"
+        fi
+        if [[ -z "$(get_env_value VELOXHASH_POOL_PASSWORD)" ]]; then
+          set_env_value VELOXHASH_POOL_PASSWORD "x"
+        fi
+        if [[ -z "$(get_env_value VELOXHASH_COIN)" ]]; then
+          set_env_value VELOXHASH_COIN "monero"
+        fi
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        restart_service
+        echo "VeloxHash public wallet address configured."
+        ;;
+      clear)
+        require_root
+        set_env_value VELOXHASH_WALLET_ADDRESS ""
+        set_env_value VELOXHASH_MINING_ENABLED 0
+        chmod 0640 "${ENV_FILE}"
+        chown root:veloxhash "${ENV_FILE}"
+        restart_service
+        echo "VeloxHash wallet address cleared and mining disabled."
+        ;;
+      "")
+        if ! env_file_readable; then
+          echo "Cannot read ${ENV_FILE}. Run as root." >&2
+          exit 1
+        fi
+        wallet="$(get_env_value VELOXHASH_WALLET_ADDRESS)"
+        if wallet_is_configured "${wallet}"; then
+          echo "wallet: configured"
+          echo "${wallet}"
+        else
+          echo "wallet: not configured"
+        fi
+        ;;
+      *)
+        echo "Unknown wallet command: ${subcommand}" >&2
+        usage >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  token)
+    require_env_file
+    if [[ "${subcommand}" == "rotate" ]]; then
+      require_root
+      if command -v veloxhash-backup >/dev/null 2>&1; then
+        veloxhash-backup --quiet >/dev/null || {
+          echo "Backup failed; refusing to rotate token." >&2
+          exit 1
+        }
+      fi
+      if command -v openssl >/dev/null 2>&1; then
+        new_token="$(openssl rand -hex 24)"
+      else
+        new_token="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48)"
+      fi
+      set_env_value VELOXHASH_API_TOKEN "${new_token}"
+      chmod 0640 "${ENV_FILE}"
+      chown root:veloxhash "${ENV_FILE}"
+      restart_service
+      echo "VeloxHash API token rotated."
+      echo "${new_token}"
+      exit 0
+    fi
+
+    if [[ -n "${subcommand}" ]]; then
+      echo "Unknown token command: ${subcommand}" >&2
+      usage >&2
+      exit 2
+    fi
+
+    if ! env_file_readable; then
+      echo "Cannot read ${ENV_FILE}. Run as root." >&2
+      exit 1
+    fi
+    get_env_value VELOXHASH_API_TOKEN
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${command}" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
