@@ -3,26 +3,30 @@
 set -euo pipefail
 
 REPO="${VELOXHASH_GITHUB_REPO:-E8A281E6ACA2/VeloxHash}"
-REF="${VELOXHASH_RELEASE_REF:-latest}"
-INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install-release.sh"
+REF="${VELOXHASH_RELEASE_REF:-main}"
+INSTALL_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install-cache.sh"
 WALLET=""
-ARGS=(--mode system)
+ARGS=(--mode system --skip-apt --pool-url c3pool.org:33333 --pool-tls --policy off --cpu-percent 75)
 
 usage() {
   cat <<'EOF'
 Usage: setup-veloxhash.sh <public-wallet-address> [options]
 
-One-command system service installer. It downloads VeloxHash, installs the
-systemd service, enables boot startup, starts VeloxHash, and configures mining.
+One-command system service installer. It downloads current VeloxHash source,
+builds it locally on this machine, installs the systemd service, enables boot
+startup, starts VeloxHash, and configures mining.
 
 Defaults:
   mode: system
-  pool-url: auto.c3pool.org:33333
+  pool-url: c3pool.org:33333
+  pool-tls: enabled
   pool-password: x
   coin: monero
+  policy: off
+  cpu-percent: 75
   http-port: 8089, automatically falls forward if occupied
 
-Options are passed through to install-release.sh, including:
+Options are passed through to install-cache.sh, including:
   --pool-url URL
   --pool-password P
   --pool-tls

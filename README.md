@@ -64,21 +64,25 @@ sudo apt-get install -y build-essential cmake libuv1-dev libssl-dev libhwloc-dev
 
 ## One-Command Service Install
 
-Install VeloxHash as a systemd service, enable boot startup, start it, and set
-both the wallet and pool address in one command:
+Install VeloxHash as a systemd service, build it locally on the current
+machine, enable boot startup, start it, and set the wallet and pool in one
+command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --pool-tls
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-c3pool.sh | LC_ALL=en_US.UTF-8 bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5
 ```
 
-By default, the service starts at boot but the automatic policy may pause CPU
-mining during the 08:00-22:00 work window, when the CPU is already busy, or
-when a non-service user was recently active. To install and start mining
-immediately at the 75% CPU thread target, disable the automatic policy during
-install:
+Default behavior of `setup-veloxhash.sh`:
+
+- source build on the current machine
+- system service install
+- pool `c3pool.org:33333`
+- TLS enabled
+- policy `off`
+- CPU target `75`
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --pool-url auto.c3pool.org:33333 --pool-tls --policy off --cpu-percent 75
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-c3pool.sh | LC_ALL=en_US.UTF-8 bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --pool-tls --coin monero --rig-id rig01 --cpu-percent 75 --policy off
 ```
 
 Switch an installed service between modes:
@@ -97,12 +101,6 @@ alternate C3Pool hostname:
 ```bash
 sudo veloxhash-mining pool set c3pool.org:33333 x monero tls
 sudo journalctl -u veloxhash -n 100 --no-pager | grep -Ei 'accepted|speed|new job|error|failed'
-```
-
-With a custom pool and rig ID:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-veloxhash.sh | bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --pool-tls --coin monero --rig-id rig01 --cpu-percent 75
 ```
 
 Cleanup system service install:
