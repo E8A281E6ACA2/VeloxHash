@@ -10,9 +10,17 @@ permissions:
   contents: write
 
 jobs:
-  build-linux-amd64:
-    name: Build Linux amd64 package
-    runs-on: ubuntu-22.04
+  build-linux:
+    name: Build Linux ${{ matrix.arch }} package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,15 +36,15 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: veloxhash-linux-amd64
+          name: veloxhash-linux-${{ matrix.arch }}
           path: |
-            dist/veloxhash-linux-amd64.tar.gz
-            dist/veloxhash-*-linux-amd64.tar.gz
+            dist/veloxhash-linux-${{ matrix.arch }}.tar.gz
+            dist/veloxhash-*-linux-${{ matrix.arch }}.tar.gz
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/veloxhash-linux-amd64.tar.gz
-            dist/veloxhash-*-linux-amd64.tar.gz
+            dist/veloxhash-linux-${{ matrix.arch }}.tar.gz
+            dist/veloxhash-*-linux-${{ matrix.arch }}.tar.gz

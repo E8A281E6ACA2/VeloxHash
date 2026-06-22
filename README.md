@@ -85,9 +85,10 @@ curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts
 
 ## Direct Binary Run
 
-For a simple foreground run, use the direct-run script. It only downloads the
-prebuilt package into `~/.cache/veloxhash/direct` and runs the binary in the
-foreground. It does not install a service.
+For a simple foreground run, use the direct-run script. It detects `amd64` or
+`arm64`, downloads the matching prebuilt package into
+`~/.cache/veloxhash/direct`, and runs the binary in the foreground. It does not
+install a service.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/run-veloxhash.sh | bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5
