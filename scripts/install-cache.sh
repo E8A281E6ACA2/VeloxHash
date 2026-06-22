@@ -44,6 +44,8 @@ Options:
   --cpu-percent N    CPU thread target, default: 75
   --policy MODE      auto or off; auto respects idle/work policy, off starts now
   --skip-apt         Do not install apt build dependencies
+  --skip-source-update
+                    Use the existing cached source tree as-is
   --skip-build       Install existing build output from the cached source tree
   --no-start         Install files without starting VeloxHash
   --no-enable-boot   Do not configure boot startup for user-mode services
@@ -178,7 +180,7 @@ while [[ $# -gt 0 ]]; do
       SOURCE_DIR="${CACHE_ROOT}/source"
       shift
       ;;
-    --skip-apt|--skip-build|--no-start|--no-enable-boot|--pool-tls|--no-pool-tls)
+    --skip-apt|--skip-source-update|--skip-build|--no-start|--no-enable-boot|--pool-tls|--no-pool-tls)
       BOOTSTRAP_ARGS+=("$1")
       ;;
     --download-only)
