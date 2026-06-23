@@ -10,8 +10,8 @@ The installed service:
 - stores the API token in `/etc/veloxhash/veloxhash.env`
 - records deployment metadata in `/etc/veloxhash/install-info.json`
 - enables unrestricted HTTP API mode only with the token supplied by systemd
-- starts the dashboard/API at boot and lets `veloxhash-policy.timer` control CPU mining
-- defaults to 75% CPU threads, no mining when a non-service user was active in the last 15 minutes, no mining during `08:00-22:00`, and no mining when load1 is above CPU cores * `0.60`
+- starts the dashboard/API at boot and lets `veloxhash-policy.timer` control CPU work
+- defaults to 75% CPU threads, no work when a non-service user was active in the last 15 minutes, no work during `08:00-22:00`, and no work when load1 is above CPU cores * `0.60`
 - checks the automatic mining policy every minute
 - installs optional cluster monitoring, disabled until `veloxhash-cluster init-primary` or `veloxhash-cluster join` is run
 - limits restart storms with `StartLimitBurst=5` in 5 minutes
@@ -22,6 +22,12 @@ Install after building:
 ```bash
 cmake --build build-veloxhash -j$(nproc)
 sudo ./scripts/install-systemd-service.sh
+```
+
+Preferred one-line install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-service.sh | sudo bash
 ```
 
 Useful commands:

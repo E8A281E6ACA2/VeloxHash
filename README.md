@@ -1,14 +1,14 @@
 # VeloxHash
 
-VeloxHash is a CPU-focused miner service with a built-in web dashboard and a stable Ubuntu systemd deployment mode.
+VeloxHash is a transparent CPU worker service with a built-in web dashboard and a stable Ubuntu systemd deployment mode.
 
 ## Current Features
 
-- CPU mining support
+- CPU worker runtime with controllable resource usage
 - Optional OpenCL and CUDA backends
 - Default donation level set to `0`
 - Built-in web dashboard at the HTTP API root path with pause/resume controls
-- Smart systemd mode: dashboard/API starts at boot, CPU mining is controlled by an automatic idle-hours policy
+- Smart systemd mode: dashboard/API starts at boot, CPU work is controlled by an automatic idle-hours policy
 - Physical-host deployment with backup, restore, validation, status, and upgrade tools
 - Project binary target renamed to `veloxhash`
 
@@ -64,43 +64,40 @@ sudo apt-get install -y build-essential cmake libuv1-dev libssl-dev libhwloc-dev
 
 ## One-Command Service Install
 
-Install VeloxHash as a systemd service, build it locally on the current
-machine, enable boot startup, start it, and set the wallet and pool in one
-command:
+Use the transparent system-service installer. It builds VeloxHash on the
+current machine, installs it to standard system paths, enables boot startup,
+starts the dashboard/API, and leaves worker execution disabled until you
+configure it.
+
+Install with default automatic policy:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-c3pool.sh | LC_ALL=en_US.UTF-8 bash -s -- 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-service.sh | sudo bash
 ```
 
-Default behavior of `setup-veloxhash.sh`:
-
-- source build on the current machine
-- system service install
-- pool `c3pool.org:33333`
-- TLS enabled
-- policy `off`
-- CPU target `75`
+Install and configure a wallet during setup:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/setup-c3pool.sh | LC_ALL=en_US.UTF-8 bash -s -- <public-wallet-address> --pool-url <pool-host:port> --pool-password x --pool-tls --coin monero --rig-id rig01 --cpu-percent 75 --policy off
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-service.sh | sudo bash -s -- --wallet <public-wallet-address>
 ```
 
-Switch an installed service between modes:
+Common install flags:
 
 ```bash
-sudo veloxhash-mining mode now   # start mining immediately
-sudo veloxhash-mining mode auto  # return to idle/work automatic policy
-sudo veloxhash-mining cpu set 75
+curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-service.sh | sudo bash -s -- \
+  --wallet <public-wallet-address> \
+  --http-host 0.0.0.0 \
+  --http-port 8089 \
+  --cpu-percent 75 \
+  --policy auto
+```
+
+After install:
+
+```bash
 sudo veloxhash-status --short
-```
-
-If the journal shows repeated pool `read error: "end of file"` or IPv6
-`connect error: "operation canceled"` lines, keep TLS enabled and try the
-alternate C3Pool hostname:
-
-```bash
-sudo veloxhash-mining pool set c3pool.org:33333 x monero tls
-sudo journalctl -u veloxhash -n 100 --no-pager | grep -Ei 'accepted|speed|new job|error|failed'
+sudo systemctl status veloxhash
+sudo sed -n 's/^VELOXHASH_API_TOKEN=//p' /etc/veloxhash/veloxhash.env
 ```
 
 Cleanup system service install:
@@ -134,56 +131,23 @@ curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts
 
 ## systemd
 
-Release-based Bash install downloads a prebuilt Linux package when one is
-available. The extracted package is kept under `~/.cache/veloxhash/source`;
-installed service files still use normal system paths such as
-`/etc/veloxhash`, `/usr/local/bin`, and `/var/log/veloxhash`.
+The supported installation path is source build plus standard system service
+deployment. Source is cached under `~/.cache/veloxhash/source`; installed
+service files use normal system paths such as `/etc/veloxhash`,
+`/usr/local/bin`, and `/var/log/veloxhash`.
 
 The installer prints a startup summary with detected system, architecture,
-package manager, mode, cache path, and HTTP port. `amd64` can use the current
-prebuilt release package. `arm64` is supported by source build fallback when no
-matching release package is published.
+package manager, mode, cache path, and HTTP port. `amd64` and `arm64` are both
+supported through local source build.
 
-Run as `root` to install the system service. Run as a normal user to install
-user mode under `~/.cache/veloxhash/runtime`; user mode does not write to
-`/etc` or `/usr/local/bin`. User mode enables the per-user systemd unit and
-tries to enable `loginctl linger` so it can start again after reboot. If linger
-cannot be enabled automatically, rerun as an administrator or run:
-`loginctl enable-linger <user>`.
+Run as `root` to install the system service. Run as a normal user with
+`--mode user` only when you intentionally want a per-user runtime under
+`~/.cache/veloxhash/runtime`.
 
-One-line prebuilt release install from GitHub:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | sudo bash -s -- --mode system <public-wallet-address>
-```
-
-User-mode install, including when running as `root` and storing files under
-`/root/.cache/veloxhash`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | bash -s -- --mode user <public-wallet-address>
-```
-
-Set the pool during install:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-release.sh | bash -s -- --mode user --pool-url auto.c3pool.org:33333 --pool-password x --coin monero <public-wallet-address>
-```
-
-This keeps the runtime in the current user's cache directory, tries to enable
-boot startup with `loginctl linger`, and automatically falls forward from port
-`8089` if that port is already in use.
-
-Source-build fallback:
+Low-level source-build install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/E8A281E6ACA2/VeloxHash/main/scripts/install-cache.sh | sudo bash -s -- --mode system <public-wallet-address>
-```
-
-Release packages are produced with:
-
-```bash
-./scripts/package-release.sh
 ```
 
 Manual cache install:
@@ -222,41 +186,33 @@ User-mode commands:
 ~/.cache/veloxhash/runtime/bin/veloxhash-user start
 ```
 
-Clone and start manually:
-
-```bash
-git clone https://github.com/E8A281E6ACA2/VeloxHash.git
-cd VeloxHash
-sudo ./start-mining.sh <public-wallet-address>
-```
-
-The same script works on `amd64` and `arm64` Ubuntu/Debian hosts. It builds the
-binary locally for the current CPU architecture, installs the systemd service,
-enables boot startup, starts the dashboard/API, and configures the wallet when
-one is provided.
-
 For a durable Ubuntu service on `0.0.0.0:8089` by default:
 
 ```bash
 sudo ./scripts/install-systemd-service.sh
-sudo veloxhash-mining wallet set <public-wallet-address>
 sudo sed -n 's/^VELOXHASH_API_TOKEN=//p' /etc/veloxhash/veloxhash.env
 sudo systemctl status veloxhash
 ```
 
-One-command physical-host install from the source tree:
+The installer copies the current `build-veloxhash/veloxhash` binary to
+`/usr/local/bin/veloxhash`, installs `/etc/veloxhash/config.json`, generates a
+random API token in `/etc/veloxhash/veloxhash.env`, enables boot startup,
+starts the service, enables the automatic policy timer, and runs health checks.
 
-```bash
-sudo ./start-mining.sh <public-wallet-address>
-```
+During install or upgrade, VeloxHash detects old installed runners that cannot
+pass pool settings to the worker, backs them up under `/var/backups/veloxhash`,
+and replaces them with the current runner.
 
-The installer copies the current `build-veloxhash/veloxhash` binary to `/usr/local/bin/veloxhash`, installs `/etc/veloxhash/config.json`, generates a random API token in `/etc/veloxhash/veloxhash.env`, enables boot startup, starts the service, enables the automatic policy timer, and runs health checks.
+The service starts at boot. The dashboard/API stays online on the selected HTTP
+port. CPU work is controlled by `veloxhash-policy.timer`, which checks every
+minute. The default policy targets 75% CPU threads, stops immediately on recent
+non-service user activity, does not run during `08:00-22:00`, and stops when
+load1 is above CPU cores * `0.60`.
 
-During install or upgrade, VeloxHash detects old installed runners that cannot pass pool settings to the miner, backs them up under `/var/backups/veloxhash`, and replaces them with the current runner.
-
-The service starts at boot. The dashboard/API stays online on the selected HTTP port. CPU mining is controlled by `veloxhash-policy.timer`, which checks every minute. The default policy targets 75% CPU threads, stops immediately on recent non-service user activity, does not mine during `08:00-22:00`, and stops mining when load1 is above CPU cores * `0.60`.
-
-Cluster workers are uniquely identified by a persistent `VELOXHASH_CLUSTER_NODE_ID`, not by IP address. IPs are still reported in cluster heartbeats for visibility, but they are not stable enough to be the primary identity.
+Cluster workers are uniquely identified by a persistent
+`VELOXHASH_CLUSTER_NODE_ID`, not by IP address. IPs are still reported in
+cluster heartbeats for visibility, but they are not stable enough to be the
+primary identity.
 
 VeloxHash does not import wallet keys. Use only a public pool payout address; never put a private key or seed phrase in config files. Mining will not start until you configure a public pool payout address:
 

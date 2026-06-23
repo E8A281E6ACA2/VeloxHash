@@ -27,13 +27,15 @@ cat > "${BIN_DIR}/sudo" <<'EOF'
 printf 'sudo_argv=' >> "${VELOXHASH_TEST_LOG}"
 printf '%q ' "$@" >> "${VELOXHASH_TEST_LOG}"
 printf '\n' >> "${VELOXHASH_TEST_LOG}"
+if [[ "${1:-}" == "-n" && "${2:-}" == "true" ]]; then
+  exit 0
+fi
 exec "$@"
 EOF
 chmod 0755 "${BIN_DIR}/sudo"
 
-WALLET="494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5"
 export VELOXHASH_TEST_LOG="${LOG_FILE}"
 
-PATH="${BIN_DIR}:$PATH" bash "${ROOT_DIR}/scripts/setup-c3pool-one.sh" "${WALLET}" --pool-url test.pool:3333 --cpu-percent 60 --policy off >/dev/null 2>&1 || true
+PATH="${BIN_DIR}:$PATH" bash "${ROOT_DIR}/scripts/install-service.sh" --wallet 494W5RU4evwbxM9392BVMG71wTk1mhrZ3iy9q3Civc4PJcift2yyBp6Bnx82mLJTkvfS6AS5MjJV8TDTU6NGLjwwKZ9Fth5 --http-port 8095 --cpu-percent 60 --policy off >/dev/null 2>&1 || true
 
 cat "${LOG_FILE}"
